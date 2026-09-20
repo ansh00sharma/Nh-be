@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from projects.models import Project
 from tasks.models import Task
+from users.roles import is_manager
 
 
 class TaskSerializer(serializers.ModelSerializer):
@@ -26,4 +27,5 @@ class TaskSerializer(serializers.ModelSerializer):
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
         if request and request.user.is_authenticated:
-            self.fields["project"].queryset = Project.objects.filter(owner=request.user)
+            if is_manager(request.user):
+                self.fields["project"].queryset = Project.objects.filter(owner=request.user)

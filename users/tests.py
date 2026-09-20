@@ -2,6 +2,8 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from users.roles import AGENT, assign_taskflow_role
+
 
 User = get_user_model()
 
@@ -23,8 +25,10 @@ class AuthAPITests(APITestCase):
         self.assertEqual(response.data["first_name"], "Alice")
         self.assertEqual(response.data["last_name"], "Example")
         self.assertEqual(response.data["email"], "alice@example.com")
+        self.assertEqual(response.data["role"], AGENT)
         self.assertNotIn("password", response.data)
-        self.assertTrue(User.objects.filter(email="alice@example.com").exists())
+        user = User.objects.get(email="alice@example.com")
+        self.assertTrue(user.groups.filter(name=AGENT).exists())
 
     def test_duplicate_signup_rejection(self):
         User.objects.create_user(
@@ -46,7 +50,8 @@ class AuthAPITests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("email", response.data)
+        self.assertEqual(response.data["status"], "error")
+        self.assertIsNone(response.data["data"])
 
     def test_successful_login(self):
         User.objects.create_user(
@@ -87,8 +92,8 @@ class AuthAPITests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-        self.assertNotIn("access", response.data)
-        self.assertNotIn("refresh", response.data)
+        self.assertEqual(response.data["status"], "error")
+        self.assertIsNone(response.data["data"])
 
     def test_authenticated_me(self):
         user = User.objects.create_user(
@@ -97,6 +102,7 @@ class AuthAPITests(APITestCase):
             last_name="Example",
             password="strong-password-123",
         )
+        assign_taskflow_role(user, AGENT)
         login_response = self.client.post(
             "/api/auth/login/",
             {
@@ -116,9 +122,11 @@ class AuthAPITests(APITestCase):
             response.data,
             {
                 "id": user.id,
+                "username": "alice@example.com",
                 "first_name": "Alice",
                 "last_name": "Example",
                 "email": "alice@example.com",
+                "role": AGENT,
                 "created_at": response.data["created_at"],
                 "updated_at": response.data["updated_at"],
             },
@@ -128,3 +136,4 @@ class AuthAPITests(APITestCase):
         response = self.client.get("/api/auth/me/")
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(response.data["status"], "error")

@@ -2,6 +2,8 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
+from users.roles import AGENT, assign_taskflow_role, get_taskflow_role
+
 
 User = get_user_model()
 
@@ -26,14 +28,33 @@ class SignupSerializer(serializers.ModelSerializer):
         return email
 
     def create(self, validated_data):
-        return User.objects.create_user(**validated_data)
+        user = User.objects.create_user(**validated_data)
+        assign_taskflow_role(user, AGENT)
+        return user
 
 
-class LoginSerializer(TokenObtainPairSerializer):
-    pass
+LoginSerializer = TokenObtainPairSerializer
 
 
 class UserSerializer(serializers.ModelSerializer):
+    username = serializers.SerializerMethodField()
+    role = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ("id", "first_name", "last_name", "email", "created_at", "updated_at")
+        fields = (
+            "id",
+            "username",
+            "first_name",
+            "last_name",
+            "email",
+            "role",
+            "created_at",
+            "updated_at",
+        )
+
+    def get_username(self, obj):
+        return obj.email
+
+    def get_role(self, obj):
+        return get_taskflow_role(obj)

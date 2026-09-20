@@ -21,6 +21,9 @@ def get_task_list_cache_version(user_id):
 
 
 def increment_task_list_cache_version(user_id):
+    if not user_id:
+        return
+
     key = task_list_version_key(user_id)
     if cache.get(key) is None:
         cache.add(key, 1)
@@ -28,6 +31,11 @@ def increment_task_list_cache_version(user_id):
         cache.incr(key)
     except ValueError:
         cache.set(key, 2)
+
+
+def increment_task_list_cache_versions(*user_ids):
+    for user_id in set(user_ids):
+        increment_task_list_cache_version(user_id)
 
 
 def make_task_list_cache_key(request):

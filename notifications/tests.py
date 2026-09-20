@@ -11,6 +11,7 @@ from notifications.models import Notification
 from notifications.tasks import create_overdue_task_notifications
 from projects.models import Project
 from tasks.models import Task
+from users.roles import AGENT, MANAGER, assign_taskflow_role
 
 
 User = get_user_model()
@@ -28,18 +29,21 @@ class NotificationTests(APITestCase):
             last_name="Owner",
             password="strong-password-123",
         )
+        assign_taskflow_role(self.owner, MANAGER)
         self.assignee = User.objects.create_user(
             email="assignee@example.com",
             first_name="Task",
             last_name="Assignee",
             password="strong-password-123",
         )
+        assign_taskflow_role(self.assignee, AGENT)
         self.new_assignee = User.objects.create_user(
             email="new-assignee@example.com",
             first_name="New",
             last_name="Assignee",
             password="strong-password-123",
         )
+        assign_taskflow_role(self.new_assignee, AGENT)
         self.project = Project.objects.create(name="Project", owner=self.owner)
 
     def authenticate(self, user):
@@ -175,5 +179,5 @@ class NotificationTests(APITestCase):
         response = self.client.get("/api/notifications/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]["id"], other_notification.id)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], other_notification.id)
