@@ -11,17 +11,13 @@ class SignupSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ("id", "username", "email", "password")
+        fields = ("id", "first_name", "last_name", "email", "password")
         read_only_fields = ("id",)
         extra_kwargs = {
             "email": {"required": True, "allow_blank": False},
-            "username": {"required": True, "allow_blank": False},
+            "first_name": {"required": True, "allow_blank": False},
+            "last_name": {"required": True, "allow_blank": False},
         }
-
-    def validate_username(self, value):
-        if User.objects.filter(username=value).exists():
-            raise serializers.ValidationError("A user with this username already exists.")
-        return value
 
     def validate_email(self, value):
         email = value.strip().lower()
@@ -40,4 +36,4 @@ class LoginSerializer(TokenObtainPairSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ("id", "username", "email")
+        fields = ("id", "first_name", "last_name", "email", "created_at", "updated_at")

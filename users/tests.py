@@ -11,7 +11,8 @@ class AuthAPITests(APITestCase):
         response = self.client.post(
             "/api/auth/signup/",
             {
-                "username": "alice",
+                "first_name": "Alice",
+                "last_name": "Example",
                 "email": "alice@example.com",
                 "password": "strong-password-123",
             },
@@ -19,22 +20,25 @@ class AuthAPITests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["username"], "alice")
+        self.assertEqual(response.data["first_name"], "Alice")
+        self.assertEqual(response.data["last_name"], "Example")
         self.assertEqual(response.data["email"], "alice@example.com")
         self.assertNotIn("password", response.data)
-        self.assertTrue(User.objects.filter(username="alice").exists())
+        self.assertTrue(User.objects.filter(email="alice@example.com").exists())
 
     def test_duplicate_signup_rejection(self):
         User.objects.create_user(
-            username="alice",
             email="alice@example.com",
+            first_name="Alice",
+            last_name="Example",
             password="strong-password-123",
         )
 
         response = self.client.post(
             "/api/auth/signup/",
             {
-                "username": "alice",
+                "first_name": "Alice",
+                "last_name": "Example",
                 "email": "alice@example.com",
                 "password": "another-strong-password-123",
             },
@@ -42,20 +46,20 @@ class AuthAPITests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("username", response.data)
         self.assertIn("email", response.data)
 
     def test_successful_login(self):
         User.objects.create_user(
-            username="alice",
             email="alice@example.com",
+            first_name="Alice",
+            last_name="Example",
             password="strong-password-123",
         )
 
         response = self.client.post(
             "/api/auth/login/",
             {
-                "username": "alice",
+                "email": "alice@example.com",
                 "password": "strong-password-123",
             },
             format="json",
@@ -67,15 +71,16 @@ class AuthAPITests(APITestCase):
 
     def test_invalid_login(self):
         User.objects.create_user(
-            username="alice",
             email="alice@example.com",
+            first_name="Alice",
+            last_name="Example",
             password="strong-password-123",
         )
 
         response = self.client.post(
             "/api/auth/login/",
             {
-                "username": "alice",
+                "email": "alice@example.com",
                 "password": "wrong-password",
             },
             format="json",
@@ -87,14 +92,15 @@ class AuthAPITests(APITestCase):
 
     def test_authenticated_me(self):
         user = User.objects.create_user(
-            username="alice",
             email="alice@example.com",
+            first_name="Alice",
+            last_name="Example",
             password="strong-password-123",
         )
         login_response = self.client.post(
             "/api/auth/login/",
             {
-                "username": "alice",
+                "email": "alice@example.com",
                 "password": "strong-password-123",
             },
             format="json",
@@ -110,8 +116,11 @@ class AuthAPITests(APITestCase):
             response.data,
             {
                 "id": user.id,
-                "username": "alice",
+                "first_name": "Alice",
+                "last_name": "Example",
                 "email": "alice@example.com",
+                "created_at": response.data["created_at"],
+                "updated_at": response.data["updated_at"],
             },
         )
 
@@ -119,5 +128,3 @@ class AuthAPITests(APITestCase):
         response = self.client.get("/api/auth/me/")
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-
-# Create your tests here.

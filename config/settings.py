@@ -51,9 +51,10 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
-    "accounts",
+    "users",
     "api",
     "projects",
+    "tasks",
 ]
 
 MIDDLEWARE = [
@@ -84,6 +85,8 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "config.wsgi.application"
+
+AUTH_USER_MODEL = "users.User"
 
 
 DATABASES = {

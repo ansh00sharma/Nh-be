@@ -12,13 +12,15 @@ User = get_user_model()
 class ProjectAPITests(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(
-            username="alice",
             email="alice@example.com",
+            first_name="Alice",
+            last_name="Example",
             password="strong-password-123",
         )
         self.other_user = User.objects.create_user(
-            username="bob",
             email="bob@example.com",
+            first_name="Bob",
+            last_name="Example",
             password="strong-password-123",
         )
 

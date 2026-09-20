@@ -3,7 +3,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.serializers import LoginSerializer, SignupSerializer, UserSerializer
+from users.serializers import LoginSerializer, SignupSerializer, UserSerializer
 
 
 class SignupView(APIView):
@@ -30,5 +30,3 @@ class MeView(APIView):
 
     def get(self, request):
         return Response(UserSerializer(request.user).data)
-
-# Create your views here.
