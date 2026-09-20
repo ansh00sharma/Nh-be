@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     "api",
     "projects",
     "tasks",
+    "notifications",
 ]
 
 MIDDLEWARE = [
@@ -138,6 +139,12 @@ CACHES = {
 
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_BEAT_SCHEDULE = {
+    "create-overdue-task-notifications-every-minute": {
+        "task": "notifications.tasks.create_overdue_task_notifications",
+        "schedule": 60.0,
+    },
+}
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
