@@ -1,3 +1,6 @@
+import logging
+from zoneinfo import ZoneInfo
+
 from celery import shared_task
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -6,7 +9,9 @@ from notifications.models import Notification
 from notifications.services import send_notification_email
 from tasks.models import Task
 
+logger = logging.getLogger(__name__)
 User = get_user_model()
+IST_TIME_ZONE = ZoneInfo("Asia/Kolkata")
 
 
 @shared_task
@@ -105,13 +110,26 @@ def create_overdue_task_notifications():
         assignee__isnull=False,
     ).exclude(status=Task.Status.DONE).select_related("assignee", "project")
 
+    overdue_count = overdue_tasks.count()
+    logger.info("Overdue notification scan found %s task(s).", overdue_count)
+
     created_count = 0
+    skipped_count = 0
+    email_sent_count = 0
+    email_failed_count = 0
+
     for task in overdue_tasks:
         already_notified = Notification.objects.filter(
             task=task,
             type=Notification.Type.TASK_OVERDUE,
         ).exists()
         if already_notified:
+            skipped_count += 1
+            logger.info(
+                "Skipping overdue task notification for task_id=%s assignee_id=%s: already notified.",
+                task.id,
+                task.assignee_id,
+            )
             continue
 
         message = _plain_task_message(
@@ -125,7 +143,7 @@ def create_overdue_task_notifications():
             type=Notification.Type.TASK_OVERDUE,
             message=message,
         )
-        send_notification_email(
+        email_sent = send_notification_email(
             task.assignee,
             "TaskFlow - Task Overdue",
             message,
@@ -133,8 +151,27 @@ def create_overdue_task_notifications():
             _task_email_context(task, assigned_by=task.project.owner, event_label="Task Overdue"),
         )
         created_count += 1
+        if email_sent:
+            email_sent_count += 1
+        else:
+            email_failed_count += 1
+        logger.info(
+            "Created overdue notification for task_id=%s assignee_id=%s email_sent=%s due_date_ist=%s.",
+            task.id,
+            task.assignee_id,
+            email_sent,
+            _format_due_date(task.due_date),
+        )
 
-    return created_count
+    summary = {
+        "overdue_found": overdue_count,
+        "notifications_created": created_count,
+        "duplicates_skipped": skipped_count,
+        "emails_sent": email_sent_count,
+        "emails_failed": email_failed_count,
+    }
+    logger.info("Overdue notification scan finished: %s", summary)
+    return summary
 
 
 def _plain_task_message(heading, task, assigned_by=None):
@@ -145,7 +182,7 @@ def _plain_task_message(heading, task, assigned_by=None):
         f"Project: {task.project.name}",
         f"Assigned by: {_user_name(assigned_by) if assigned_by else '-'}",
         f"Current status: {_status_label(task.status)}",
-        f"Due date: {_format_due_date(task.due_date)}",
+        f"Due date (IST): {_format_due_date(task.due_date)}",
     ]
     return "\n".join(lines)
 
@@ -168,7 +205,7 @@ def _task_email_context(task, assigned_by=None, event_label="", old_status=None,
 def _format_due_date(value):
     if not value:
         return "-"
-    return timezone.localtime(value).strftime("%b %d, %Y, %I:%M %p")
+    return timezone.localtime(value, IST_TIME_ZONE).strftime("%b %d, %Y, %I:%M %p IST")
 
 
 def _get_user(user_id):

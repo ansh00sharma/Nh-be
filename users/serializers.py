@@ -22,7 +22,7 @@ class RoleField(serializers.Field):
 
     def to_internal_value(self, data):
         if data not in TASKFLOW_ROLES:
-            raise serializers.ValidationError("Role must be manager or agent.")
+            raise serializers.ValidationError("Role must be admin, manager, or agent.")
         return {"role": data}
 
 

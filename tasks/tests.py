@@ -10,7 +10,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from projects.models import Project
 from tasks.models import Task
-from users.roles import AGENT, MANAGER, assign_taskflow_role
+from users.roles import ADMIN, AGENT, MANAGER, assign_taskflow_role
 
 
 User = get_user_model()
@@ -19,6 +19,7 @@ User = get_user_model()
 @override_settings(
     CELERY_TASK_ALWAYS_EAGER=True,
     CELERY_TASK_EAGER_PROPAGATES=True,
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
     CACHES={
         "default": {
             "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
@@ -57,10 +58,21 @@ class TaskAPITests(APITestCase):
             password="strong-password-123",
         )
         assign_taskflow_role(self.other_agent, AGENT)
+        self.admin = User.objects.create_user(
+            email="admin@example.com",
+            first_name="Admin",
+            last_name="Example",
+            password="strong-password-123",
+        )
+        assign_taskflow_role(self.admin, ADMIN)
         self.project = Project.objects.create(name="Own Project", owner=self.user)
         self.other_project = Project.objects.create(
             name="Other Project",
             owner=self.other_user,
+        )
+        self.admin_project = Project.objects.create(
+            name="Admin Project",
+            owner=self.admin,
         )
 
     def authenticate(self, user):
@@ -115,6 +127,22 @@ class TaskAPITests(APITestCase):
         self.assertEqual(response.data["status"], "error")
         self.assertIsNone(response.data["data"])
 
+    def test_admin_can_create_task_for_any_project(self):
+        self.authenticate(self.admin)
+
+        response = self.client.post(
+            "/api/tasks/",
+            {
+                "project": self.project.id,
+                "title": "Admin task",
+                "status": Task.Status.TODO,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Task.objects.get(id=response.data["id"]).project, self.project)
+
     def test_user_only_sees_tasks_from_their_own_projects(self):
         own_task = Task.objects.create(project=self.project, title="Visible task")
         Task.objects.create(project=self.other_project, title="Hidden task")
@@ -125,6 +153,47 @@ class TaskAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["id"], own_task.id)
+
+    def test_admin_sees_all_tasks(self):
+        manager_task = Task.objects.create(project=self.project, title="Manager task")
+        other_manager_task = Task.objects.create(
+            project=self.other_project,
+            title="Other manager task",
+        )
+        admin_task = Task.objects.create(project=self.admin_project, title="Admin task")
+        self.authenticate(self.admin)
+
+        response = self.client.get("/api/tasks/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 3)
+        self.assertEqual(
+            {task["id"] for task in response.data["results"]},
+            {manager_task.id, other_manager_task.id, admin_task.id},
+        )
+
+    def test_admin_can_update_manager_owned_task(self):
+        task = Task.objects.create(project=self.project, title="Manager task")
+        self.authenticate(self.admin)
+
+        response = self.client.patch(
+            f"/api/tasks/{task.id}/",
+            {"title": "Admin updated"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        task.refresh_from_db()
+        self.assertEqual(task.title, "Admin updated")
+
+    def test_admin_can_delete_manager_owned_task(self):
+        task = Task.objects.create(project=self.project, title="Manager task")
+        self.authenticate(self.admin)
+
+        response = self.client.delete(f"/api/tasks/{task.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(Task.objects.filter(id=task.id).exists())
 
     def test_agent_only_sees_tasks_assigned_to_themselves(self):
         own_task = Task.objects.create(
@@ -160,6 +229,90 @@ class TaskAPITests(APITestCase):
         response = self.client.get(f"/api/tasks/{task.id}/")
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_manager_cannot_modify_admin_owned_task(self):
+        task = Task.objects.create(project=self.admin_project, title="Admin task")
+        self.authenticate(self.user)
+
+        response = self.client.patch(
+            f"/api/tasks/{task.id}/",
+            {"title": "Manager override"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        task.refresh_from_db()
+        self.assertEqual(task.title, "Admin task")
+
+    def test_manager_cannot_delete_admin_owned_task(self):
+        task = Task.objects.create(project=self.admin_project, title="Admin task")
+        self.authenticate(self.user)
+
+        response = self.client.delete(f"/api/tasks/{task.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(Task.objects.filter(id=task.id).exists())
+
+    def test_manager_cannot_modify_another_manager_task(self):
+        task = Task.objects.create(project=self.other_project, title="Other manager task")
+        self.authenticate(self.user)
+
+        response = self.client.patch(
+            f"/api/tasks/{task.id}/",
+            {"title": "Manager override"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        task.refresh_from_db()
+        self.assertEqual(task.title, "Other manager task")
+
+    def test_manager_cannot_delete_another_manager_task(self):
+        task = Task.objects.create(project=self.other_project, title="Other manager task")
+        self.authenticate(self.user)
+
+        response = self.client.delete(f"/api/tasks/{task.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(Task.objects.filter(id=task.id).exists())
+
+    def test_agent_cannot_override_admin_resources(self):
+        task = Task.objects.create(
+            project=self.admin_project,
+            title="Admin task",
+            assignee=self.agent,
+            status=Task.Status.TODO,
+        )
+        self.authenticate(self.agent)
+
+        response = self.client.patch(
+            f"/api/tasks/{task.id}/",
+            {"title": "Agent override"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        task.refresh_from_db()
+        self.assertEqual(task.title, "Admin task")
+
+    def test_agent_cannot_override_manager_resources(self):
+        task = Task.objects.create(
+            project=self.project,
+            title="Manager task",
+            assignee=self.agent,
+            status=Task.Status.TODO,
+        )
+        self.authenticate(self.agent)
+
+        response = self.client.patch(
+            f"/api/tasks/{task.id}/",
+            {"project": self.admin_project.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        task.refresh_from_db()
+        self.assertEqual(task.project, self.project)
 
     def test_agent_can_update_status_of_assigned_task(self):
         task = Task.objects.create(
@@ -477,3 +630,26 @@ class TaskAPITests(APITestCase):
         self.assertEqual(update_response.status_code, status.HTTP_200_OK)
         self.assertEqual(fresh_response.data["count"], 1)
         self.assertEqual(fresh_response.data["results"][0]["id"], task.id)
+
+    def test_admin_sees_fresh_data_after_manager_task_update(self):
+        task = Task.objects.create(
+            project=self.project,
+            title="Admin cached task",
+            status=Task.Status.TODO,
+        )
+        self.authenticate(self.admin)
+        first_response = self.client.get("/api/tasks/")
+
+        self.authenticate(self.user)
+        update_response = self.client.patch(
+            f"/api/tasks/{task.id}/",
+            {"status": Task.Status.DONE},
+            format="json",
+        )
+
+        self.authenticate(self.admin)
+        fresh_response = self.client.get("/api/tasks/")
+
+        self.assertEqual(first_response.data["results"][0]["status"], Task.Status.TODO)
+        self.assertEqual(update_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(fresh_response.data["results"][0]["status"], Task.Status.DONE)

@@ -12,14 +12,14 @@ from tasks.cache import (
     increment_task_list_cache_versions,
     make_task_list_cache_key,
 )
-from tasks.models import Task
+from tasks.querysets import get_task_queryset_for_user
 from tasks.serializers import TaskSerializer
 from notifications.tasks import (
     create_task_created_notification,
     create_task_reassigned_notification,
     create_task_status_changed_notification,
 )
-from users.roles import is_agent, is_manager
+from users.roles import get_admin_user_ids, is_admin, is_agent, is_manager
 
 
 class TaskViewSet(ModelViewSet):
@@ -35,18 +35,11 @@ class TaskViewSet(ModelViewSet):
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        if not (is_manager(request.user) or is_agent(request.user)):
-            raise PermissionDenied("A manager or agent role is required.")
+        if not (is_admin(request.user) or is_manager(request.user) or is_agent(request.user)):
+            raise PermissionDenied("An admin, manager, or agent role is required.")
 
     def get_queryset(self):
-        if is_manager(self.request.user):
-            queryset = Task.objects.filter(project__owner=self.request.user)
-        elif is_agent(self.request.user):
-            queryset = Task.objects.filter(assignee=self.request.user)
-        else:
-            queryset = Task.objects.none()
-
-        queryset = queryset.select_related("project", "project__owner", "assignee")
+        queryset = get_task_queryset_for_user(self.request.user)
 
         status_value = self.request.query_params.get("status")
         if status_value:
@@ -81,8 +74,8 @@ class TaskViewSet(ModelViewSet):
         return queryset
 
     def create(self, request, *args, **kwargs):
-        if not is_manager(request.user):
-            raise PermissionDenied("Only managers can create tasks.")
+        if not (is_admin(request.user) or is_manager(request.user)):
+            raise PermissionDenied("Only admins and managers can create tasks.")
         return super().create(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):
@@ -113,7 +106,11 @@ class TaskViewSet(ModelViewSet):
 
     def perform_create(self, serializer):
         task = serializer.save()
-        increment_task_list_cache_versions(task.project.owner_id, task.assignee_id)
+        increment_task_list_cache_versions(
+            task.project.owner_id,
+            task.assignee_id,
+            *get_admin_user_ids(),
+        )
         if task.assignee_id:
             create_task_created_notification.delay(
                 task.id,
@@ -131,6 +128,7 @@ class TaskViewSet(ModelViewSet):
             task.project.owner_id,
             previous_assignee_id,
             task.assignee_id,
+            *get_admin_user_ids(),
         )
         if task.assignee_id and task.assignee_id != previous_assignee_id:
             create_task_reassigned_notification.delay(
@@ -150,11 +148,11 @@ class TaskViewSet(ModelViewSet):
         owner_id = instance.project.owner_id
         assignee_id = instance.assignee_id
         instance.delete()
-        increment_task_list_cache_versions(owner_id, assignee_id)
+        increment_task_list_cache_versions(owner_id, assignee_id, *get_admin_user_ids())
 
     def destroy(self, request, *args, **kwargs):
-        if not is_manager(request.user):
-            raise PermissionDenied("Only managers can delete tasks.")
+        if not (is_admin(request.user) or is_manager(request.user)):
+            raise PermissionDenied("Only admins and managers can delete tasks.")
         instance = self.get_object()
         self.perform_destroy(instance)
         return success_response("Task deleted successfully", None)

@@ -1,8 +1,8 @@
 from rest_framework import serializers
 
 from projects.models import Project
+from projects.querysets import get_project_queryset_for_user
 from tasks.models import Task
-from users.roles import is_manager
 
 
 class TaskSerializer(serializers.ModelSerializer):
@@ -46,8 +46,7 @@ class TaskSerializer(serializers.ModelSerializer):
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
         if request and request.user.is_authenticated:
-            if is_manager(request.user):
-                self.fields["project"].queryset = Project.objects.filter(owner=request.user)
+            self.fields["project"].queryset = get_project_queryset_for_user(request.user)
 
     def get_assignee_name(self, obj):
         if not obj.assignee:

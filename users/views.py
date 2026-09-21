@@ -22,7 +22,7 @@ from users.serializers import (
     SignupSerializer,
     UserSerializer,
 )
-from users.roles import is_manager
+from users.roles import is_admin_or_manager
 
 
 User = get_user_model()
@@ -82,8 +82,8 @@ class ManagedUserViewSet(
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        if not is_manager(request.user):
-            raise PermissionDenied("Only managers can access users.")
+        if not is_admin_or_manager(request.user):
+            raise PermissionDenied("Only admins and managers can access users.")
 
     def get_queryset(self):
         return User.objects.order_by("id")

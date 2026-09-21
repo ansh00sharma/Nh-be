@@ -1,9 +1,11 @@
 from django.contrib.auth.models import Group
 
 
+ADMIN = "admin"
 MANAGER = "manager"
 AGENT = "agent"
-TASKFLOW_ROLES = (MANAGER, AGENT)
+TASKFLOW_ROLES = (ADMIN, MANAGER, AGENT)
+ADMIN_MODULES = ("dashboard", "users", "projects", "tasks")
 MANAGER_MODULES = ("users", "projects", "tasks")
 AGENT_MODULES = ("tasks",)
 
@@ -36,14 +38,28 @@ def is_manager(user):
     return get_taskflow_role(user) == MANAGER
 
 
+def is_admin(user):
+    return get_taskflow_role(user) == ADMIN
+
+
 def is_agent(user):
     return get_taskflow_role(user) == AGENT
 
 
+def is_admin_or_manager(user):
+    return is_admin(user) or is_manager(user)
+
+
 def get_allowed_modules(user):
     role = get_taskflow_role(user)
+    if role == ADMIN:
+        return list(ADMIN_MODULES)
     if role == MANAGER:
         return list(MANAGER_MODULES)
     if role == AGENT:
         return list(AGENT_MODULES)
     return []
+
+
+def get_admin_user_ids():
+    return Group.objects.filter(name=ADMIN).values_list("user__id", flat=True)

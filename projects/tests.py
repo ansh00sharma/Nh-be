@@ -4,7 +4,7 @@ from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from projects.models import Project
-from users.roles import AGENT, MANAGER, assign_taskflow_role
+from users.roles import ADMIN, AGENT, MANAGER, assign_taskflow_role
 
 
 User = get_user_model()
@@ -33,6 +33,13 @@ class ProjectAPITests(APITestCase):
             password="strong-password-123",
         )
         assign_taskflow_role(self.agent, AGENT)
+        self.admin = User.objects.create_user(
+            email="admin@example.com",
+            first_name="Admin",
+            last_name="Example",
+            password="strong-password-123",
+        )
+        assign_taskflow_role(self.admin, ADMIN)
 
     def authenticate(self, user):
         access_token = RefreshToken.for_user(user).access_token
@@ -211,6 +218,80 @@ class ProjectAPITests(APITestCase):
             description="Hidden",
             owner=self.other_user,
         )
+        self.authenticate(self.user)
+
+        response = self.client.delete(f"/api/projects/{project.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(Project.objects.filter(id=project.id).exists())
+
+    def test_admin_can_access_all_projects(self):
+        manager_project = Project.objects.create(name="Manager Project", owner=self.user)
+        admin_project = Project.objects.create(name="Admin Project", owner=self.admin)
+        self.authenticate(self.admin)
+
+        response = self.client.get("/api/projects/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(response.data["count"], 2)
+        self.assertTrue(
+            {manager_project.id, admin_project.id}.issubset(
+                {project["id"] for project in response.data["results"]}
+            )
+        )
+
+    def test_admin_can_create_project(self):
+        self.authenticate(self.admin)
+
+        response = self.client.post(
+            "/api/projects/",
+            {"name": "Admin Created", "description": "Owned by admin"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        project = Project.objects.get(id=response.data["id"])
+        self.assertEqual(project.owner, self.admin)
+
+    def test_admin_can_update_manager_owned_project(self):
+        project = Project.objects.create(name="Manager Project", owner=self.user)
+        self.authenticate(self.admin)
+
+        response = self.client.patch(
+            f"/api/projects/{project.id}/",
+            {"name": "Admin Updated"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        project.refresh_from_db()
+        self.assertEqual(project.name, "Admin Updated")
+
+    def test_admin_can_delete_manager_owned_project(self):
+        project = Project.objects.create(name="Manager Project", owner=self.user)
+        self.authenticate(self.admin)
+
+        response = self.client.delete(f"/api/projects/{project.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(Project.objects.filter(id=project.id).exists())
+
+    def test_manager_cannot_update_admin_owned_project(self):
+        project = Project.objects.create(name="Admin Project", owner=self.admin)
+        self.authenticate(self.user)
+
+        response = self.client.patch(
+            f"/api/projects/{project.id}/",
+            {"name": "Manager Override"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        project.refresh_from_db()
+        self.assertEqual(project.name, "Admin Project")
+
+    def test_manager_cannot_delete_admin_owned_project(self):
+        project = Project.objects.create(name="Admin Project", owner=self.admin)
         self.authenticate(self.user)
 
         response = self.client.delete(f"/api/projects/{project.id}/")
