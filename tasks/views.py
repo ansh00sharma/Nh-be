@@ -42,6 +42,8 @@ class TaskViewSet(ModelViewSet):
         else:
             queryset = Task.objects.none()
 
+        queryset = queryset.select_related("project", "project__owner", "assignee")
+
         status_value = self.request.query_params.get("status")
         if status_value:
             queryset = queryset.filter(status=status_value)

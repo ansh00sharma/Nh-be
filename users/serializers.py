@@ -1,5 +1,7 @@
 from django.contrib.auth import get_user_model
+from django.contrib.auth import authenticate
 from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from users.roles import (
@@ -49,7 +51,28 @@ class SignupSerializer(serializers.ModelSerializer):
         return user
 
 
-LoginSerializer = TokenObtainPairSerializer
+class LoginSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        email = (attrs.get(self.username_field) or attrs.get("username") or "").strip().lower()
+        password = attrs.get("password")
+
+        if email and not User.objects.filter(email__iexact=email).exists():
+            raise AuthenticationFailed("No account found with this email.")
+
+        if email and password:
+            user = authenticate(
+                request=self.context.get("request"),
+                username=email,
+                password=password,
+            )
+
+            if user is None:
+                raise AuthenticationFailed("Incorrect password.")
+
+            if not user.is_active:
+                raise AuthenticationFailed("This account is inactive.")
+
+        return super().validate(attrs)
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -87,7 +110,7 @@ class ManagedUserSerializer(serializers.ModelSerializer):
     modules = serializers.SerializerMethodField(read_only=True)
     password = serializers.CharField(
         write_only=True,
-        min_length=8,
+        min_length=6,
         required=False,
         allow_blank=True,
     )

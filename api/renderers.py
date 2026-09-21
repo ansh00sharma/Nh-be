@@ -39,6 +39,18 @@ def _error_message(data):
         detail = data.get("detail")
         if detail:
             return str(detail)
+
+        messages = []
+        for field, errors in data.items():
+            if isinstance(errors, (list, tuple)):
+                messages.append(f"{field}: {', '.join(str(error) for error in errors)}")
+            elif isinstance(errors, dict):
+                messages.append(f"{field}: {_error_message(errors)}")
+            else:
+                messages.append(f"{field}: {errors}")
+        if messages:
+            return "; ".join(messages)
+
         return "Invalid request data"
     if isinstance(data, list) and data:
         return str(data[0])
