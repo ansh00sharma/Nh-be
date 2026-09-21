@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -467,15 +468,87 @@ class TaskAPITests(APITestCase):
         self.assertEqual(response.data["results"][0]["id"], matching_task.id)
 
     def test_task_list_is_paginated(self):
-        Task.objects.create(project=self.project, title="First task")
-        Task.objects.create(project=self.project, title="Second task")
+        for index in range(12):
+            Task.objects.create(project=self.project, title=f"Task {index}")
         self.authenticate(self.user)
 
-        response = self.client.get("/api/tasks/?page_size=1")
+        response = self.client.get("/api/tasks/?page_size=10")
+        page_two_response = self.client.get("/api/tasks/?page_size=10&page=2")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["count"], 2)
-        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(response.data["count"], 12)
+        self.assertEqual(len(response.data["results"]), 10)
+        self.assertIsNotNone(response.data["next"])
+        self.assertEqual(page_two_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(page_two_response.data["results"]), 2)
+        self.assertIsNotNone(page_two_response.data["previous"])
+
+    def test_task_list_supports_only_expected_page_sizes(self):
+        for index in range(25):
+            Task.objects.create(project=self.project, title=f"Task {index}")
+        self.authenticate(self.user)
+
+        page_size_20_response = self.client.get("/api/tasks/?page_size=20")
+        page_size_50_response = self.client.get("/api/tasks/?page_size=50")
+        invalid_page_size_response = self.client.get("/api/tasks/?page_size=25")
+
+        self.assertEqual(page_size_20_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(page_size_20_response.data["results"]), 20)
+        self.assertEqual(page_size_50_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(page_size_50_response.data["results"]), 25)
+        self.assertEqual(invalid_page_size_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(invalid_page_size_response.data["results"]), 10)
+
+    def test_task_list_cache_key_separates_query_parameters(self):
+        for index in range(12):
+            Task.objects.create(project=self.project, title=f"Task {index}")
+        self.authenticate(self.user)
+
+        page_size_10_response = self.client.get("/api/tasks/?page_size=10")
+        page_size_20_response = self.client.get("/api/tasks/?page_size=20")
+
+        self.assertEqual(page_size_10_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(page_size_20_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(page_size_10_response.data["results"]), 10)
+        self.assertEqual(len(page_size_20_response.data["results"]), 12)
+
+    def test_task_list_cache_key_separates_filter_parameters(self):
+        Task.objects.create(
+            project=self.project,
+            title="Todo task",
+            status=Task.Status.TODO,
+        )
+        done_task = Task.objects.create(
+            project=self.project,
+            title="Done task",
+            status=Task.Status.DONE,
+        )
+        self.authenticate(self.user)
+
+        todo_response = self.client.get(f"/api/tasks/?status={Task.Status.TODO}")
+        done_response = self.client.get(f"/api/tasks/?status={Task.Status.DONE}")
+
+        self.assertEqual(todo_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(done_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(todo_response.data["count"], 1)
+        self.assertEqual(done_response.data["count"], 1)
+        self.assertEqual(done_response.data["results"][0]["id"], done_task.id)
+
+    def test_task_cache_hit_prints_only_on_cache_hit(self):
+        Task.objects.create(project=self.project, title="Cached task")
+        self.authenticate(self.user)
+
+        with patch("builtins.print") as mocked_print:
+            first_response = self.client.get("/api/tasks/?page_size=10")
+            cached_response = self.client.get("/api/tasks/?page_size=10")
+
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(cached_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(first_response.data, cached_response.data)
+        mocked_print.assert_called_once()
+        message = mocked_print.call_args.args[0]
+        self.assertIn(f"[TASK CACHE HIT] user={self.user.id}", message)
+        self.assertIn("key=tasks:list:", message)
 
     def test_repeated_task_list_request_uses_cache_until_invalidated(self):
         task = Task.objects.create(project=self.project, title="Original title")

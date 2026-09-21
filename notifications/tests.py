@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.core import mail
 from django.contrib.auth import get_user_model
@@ -73,13 +74,13 @@ class NotificationTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         task = Task.objects.get(title="New assigned task")
-        self.assertTrue(
-            Notification.objects.filter(
-                task=task,
-                user=self.assignee,
-                type=Notification.Type.TASK_CREATED,
-            ).exists()
+        notification = Notification.objects.get(
+            task=task,
+            user=self.assignee,
+            type=Notification.Type.TASK_CREATED,
         )
+        self.assertTrue(notification.is_read_by_system)
+        self.assertTrue(notification.is_send)
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(mail.outbox[0].to, [self.assignee.email])
         self.assertEqual(mail.outbox[0].subject, "TaskFlow - New Task Created")
@@ -115,13 +116,13 @@ class NotificationTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(
-            Notification.objects.filter(
-                task=task,
-                user=self.new_assignee,
-                type=Notification.Type.TASK_REASSIGNED,
-            ).exists()
+        notification = Notification.objects.get(
+            task=task,
+            user=self.new_assignee,
+            type=Notification.Type.TASK_REASSIGNED,
         )
+        self.assertTrue(notification.is_read_by_system)
+        self.assertTrue(notification.is_send)
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(mail.outbox[0].to, [self.new_assignee.email])
         self.assertEqual(mail.outbox[0].subject, "TaskFlow - Task Reassigned to You")
@@ -191,15 +192,18 @@ class NotificationTests(APITestCase):
             due_date=timezone.now() - timedelta(hours=1),
         )
 
-        create_overdue_task_notifications.delay()
+        result = create_overdue_task_notifications.delay().get()
 
-        self.assertTrue(
-            Notification.objects.filter(
-                task=task,
-                user=self.assignee,
-                type=Notification.Type.TASK_OVERDUE,
-            ).exists()
+        notification = Notification.objects.get(
+            task=task,
+            user=self.assignee,
+            type=Notification.Type.TASK_OVERDUE,
         )
+        self.assertTrue(notification.is_read_by_system)
+        self.assertTrue(notification.is_send)
+        self.assertEqual(result["future_due_found"], 0)
+        self.assertEqual(result["notifications_send"], 1)
+        self.assertEqual(result["total_notification"], 1)
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(mail.outbox[0].to, [self.assignee.email])
         self.assertEqual(mail.outbox[0].subject, "TaskFlow - Task Overdue")
@@ -228,9 +232,12 @@ class NotificationTests(APITestCase):
             due_date=timezone.now() + timedelta(hours=1),
         )
 
-        create_overdue_task_notifications.delay()
+        result = create_overdue_task_notifications.delay().get()
 
         self.assertFalse(Notification.objects.exists())
+        self.assertEqual(result["future_due_found"], 1)
+        self.assertEqual(result["notifications_send"], 0)
+        self.assertEqual(result["total_notification"], 1)
         self.assertEqual(len(mail.outbox), 0)
 
     def test_repeated_overdue_checks_do_not_create_duplicates(self):
@@ -241,11 +248,62 @@ class NotificationTests(APITestCase):
             due_date=timezone.now() - timedelta(hours=1),
         )
 
-        create_overdue_task_notifications.delay()
-        create_overdue_task_notifications.delay()
+        first_result = create_overdue_task_notifications.delay().get()
+        second_result = create_overdue_task_notifications.delay().get()
 
         self.assertEqual(Notification.objects.count(), 1)
+        self.assertEqual(first_result["notifications_send"], 1)
+        self.assertEqual(first_result["total_notification"], 1)
+        self.assertEqual(second_result["notifications_send"], 0)
+        self.assertEqual(second_result["total_notification"], 0)
         self.assertEqual(len(mail.outbox), 1)
+
+    def test_overdue_check_retries_existing_unsent_notification(self):
+        task = Task.objects.create(
+            project=self.project,
+            title="Retry overdue",
+            assignee=self.assignee,
+            due_date=timezone.now() - timedelta(hours=1),
+        )
+        Notification.objects.create(
+            user=self.assignee,
+            task=task,
+            type=Notification.Type.TASK_OVERDUE,
+            message="Previous failed notification",
+            is_read_by_system=True,
+            is_send=False,
+        )
+
+        result = create_overdue_task_notifications.delay().get()
+
+        notification = Notification.objects.get()
+        self.assertEqual(Notification.objects.count(), 1)
+        self.assertTrue(notification.is_read_by_system)
+        self.assertTrue(notification.is_send)
+        self.assertEqual(result["notifications_send"], 1)
+        self.assertEqual(result["total_notification"], 1)
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_overdue_check_tracks_failed_email(self):
+        task = Task.objects.create(
+            project=self.project,
+            title="Email failure",
+            assignee=self.assignee,
+            due_date=timezone.now() - timedelta(hours=1),
+        )
+
+        with patch("notifications.tasks.send_notification_email", return_value=False):
+            result = create_overdue_task_notifications.delay().get()
+
+        notification = Notification.objects.get(
+            task=task,
+            user=self.assignee,
+            type=Notification.Type.TASK_OVERDUE,
+        )
+        self.assertTrue(notification.is_read_by_system)
+        self.assertFalse(notification.is_send)
+        self.assertEqual(result["notifications_send"], 0)
+        self.assertEqual(result["total_notification"], 0)
 
     def test_changing_task_status_creates_status_notification_and_email(self):
         task = Task.objects.create(
@@ -268,6 +326,8 @@ class NotificationTests(APITestCase):
             user=self.owner,
             type=Notification.Type.TASK_STATUS_CHANGED,
         )
+        self.assertTrue(notification.is_read_by_system)
+        self.assertTrue(notification.is_send)
         self.assertIn("Todo -> In progress", notification.message)
         self.assertIn(task.title, notification.message)
         self.assertEqual(len(mail.outbox), 1)

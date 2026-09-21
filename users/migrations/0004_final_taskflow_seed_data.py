@@ -31,9 +31,9 @@ FINAL_SEED_USERS = (
     },
 )
 FINAL_SEED_PROJECTS = (
-    {"name": "Fintech", "owner_email": "admin@taskflow.in"},
-    {"name": "Sales Marketing", "owner_email": "sharma999ansh@gmail.com"},
-    {"name": "HR management", "owner_email": "sharma999ansh@gmail.com"},
+    {"name": "Fintech", "description": "For aiding financial tasks", "owner_email": "admin@taskflow.in"},
+    {"name": "Sales Marketing", "description": "for sales rep and nurture process","owner_email": "sharma999ansh@gmail.com"},
+    {"name": "HR management", "description": "for resource management","owner_email": "sharma999ansh@gmail.com"},
 )
 
 
