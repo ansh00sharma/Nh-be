@@ -1,24 +1,29 @@
 import logging
 
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
 
 
 logger = logging.getLogger(__name__)
 
 
-def send_notification_email(user, subject, message):
+def send_notification_email(user, subject, message, template_name=None, context=None):
     if not getattr(user, "email", None):
         return False
 
     try:
-        send_mail(
+        email = EmailMultiAlternatives(
             subject,
             message,
             settings.DEFAULT_FROM_EMAIL,
             [user.email],
-            fail_silently=False,
         )
+        if template_name:
+            html_message = render_to_string(template_name, context or {})
+            email.attach_alternative(html_message, "text/html")
+
+        email.send(fail_silently=False)
     except Exception:
         logger.exception("Failed to send notification email to user_id=%s", user.id)
         return False

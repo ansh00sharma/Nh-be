@@ -4,6 +4,7 @@ from django.db import models
 
 class Notification(models.Model):
     class Type(models.TextChoices):
+        TASK_CREATED = "task_created", "Task created"
         TASK_OVERDUE = "task_overdue", "Task overdue"
         TASK_REASSIGNED = "task_reassigned", "Task reassigned"
         TASK_STATUS_CHANGED = "task_status_changed", "Task status changed"

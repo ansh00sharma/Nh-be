@@ -15,6 +15,7 @@ from tasks.cache import (
 from tasks.models import Task
 from tasks.serializers import TaskSerializer
 from notifications.tasks import (
+    create_task_created_notification,
     create_task_reassigned_notification,
     create_task_status_changed_notification,
 )
@@ -113,6 +114,12 @@ class TaskViewSet(ModelViewSet):
     def perform_create(self, serializer):
         task = serializer.save()
         increment_task_list_cache_versions(task.project.owner_id, task.assignee_id)
+        if task.assignee_id:
+            create_task_created_notification.delay(
+                task.id,
+                task.assignee_id,
+                self.request.user.id,
+            )
 
     def perform_update(self, serializer):
         previous_project_owner_id = serializer.instance.project.owner_id
@@ -126,7 +133,11 @@ class TaskViewSet(ModelViewSet):
             task.assignee_id,
         )
         if task.assignee_id and task.assignee_id != previous_assignee_id:
-            create_task_reassigned_notification.delay(task.id, task.assignee_id)
+            create_task_reassigned_notification.delay(
+                task.id,
+                task.assignee_id,
+                self.request.user.id,
+            )
         if task.status != previous_status:
             create_task_status_changed_notification.delay(
                 task.id,
