@@ -6,6 +6,7 @@ class Notification(models.Model):
     class Type(models.TextChoices):
         TASK_OVERDUE = "task_overdue", "Task overdue"
         TASK_REASSIGNED = "task_reassigned", "Task reassigned"
+        TASK_STATUS_CHANGED = "task_status_changed", "Task status changed"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

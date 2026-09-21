@@ -12,6 +12,8 @@ It includes:
 - Celery background jobs
 - Overdue task notifications
 - Task reassignment notifications
+- Task status-change notifications
+- Plain-text notification email delivery through Django SMTP
 - Notification listing
 - Health endpoint
 - Metrics endpoint
@@ -277,6 +279,45 @@ Notifications:
 Health and metrics:
 - `GET /api/health/`
 - `GET /api/metrics/`
+
+## Manual SMTP Testing
+
+Set SMTP values in `.env`. For Gmail SMTP, use an App Password when two-factor authentication is enabled.
+
+```env
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=True
+EMAIL_HOST_USER=your-address@gmail.com
+EMAIL_HOST_PASSWORD=your-app-password
+DEFAULT_FROM_EMAIL=your-address@gmail.com
+```
+
+Do not store real SMTP credentials in code.
+
+Run the stack:
+
+```bash
+docker compose up -d
+docker compose logs -f celery_worker celery_beat
+```
+
+Trigger each notification type:
+
+```text
+Task reassignment: update a task assignee to another user.
+Task status change: update a task status, for example todo -> in_progress.
+Overdue task: create or update an assigned task with due_date in the past and status not done, then wait for Celery Beat.
+```
+
+Expected result:
+
+```text
+A notification row appears through GET /api/notifications/.
+The Celery worker logs the notification task.
+The intended recipient receives a plain-text email.
+```
 
 ## Architecture Notes
 

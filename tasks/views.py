@@ -14,7 +14,10 @@ from tasks.cache import (
 )
 from tasks.models import Task
 from tasks.serializers import TaskSerializer
-from notifications.tasks import create_task_reassigned_notification
+from notifications.tasks import (
+    create_task_reassigned_notification,
+    create_task_status_changed_notification,
+)
 from users.roles import is_agent, is_manager
 
 
@@ -114,6 +117,7 @@ class TaskViewSet(ModelViewSet):
     def perform_update(self, serializer):
         previous_project_owner_id = serializer.instance.project.owner_id
         previous_assignee_id = serializer.instance.assignee_id
+        previous_status = serializer.instance.status
         task = serializer.save()
         increment_task_list_cache_versions(
             previous_project_owner_id,
@@ -123,6 +127,13 @@ class TaskViewSet(ModelViewSet):
         )
         if task.assignee_id and task.assignee_id != previous_assignee_id:
             create_task_reassigned_notification.delay(task.id, task.assignee_id)
+        if task.status != previous_status:
+            create_task_status_changed_notification.delay(
+                task.id,
+                previous_status,
+                task.status,
+                self.request.user.id,
+            )
 
     def perform_destroy(self, instance):
         owner_id = instance.project.owner_id

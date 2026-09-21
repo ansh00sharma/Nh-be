@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from django.core import mail
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.utils import timezone
@@ -8,7 +9,9 @@ from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from notifications.models import Notification
-from notifications.tasks import create_overdue_task_notifications
+from notifications.tasks import (
+    create_overdue_task_notifications,
+)
 from projects.models import Project
 from tasks.models import Task
 from users.roles import AGENT, MANAGER, assign_taskflow_role
@@ -20,9 +23,13 @@ User = get_user_model()
 @override_settings(
     CELERY_TASK_ALWAYS_EAGER=True,
     CELERY_TASK_EAGER_PROPAGATES=True,
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
 )
 class NotificationTests(APITestCase):
     def setUp(self):
+        if hasattr(mail, "outbox"):
+            mail.outbox.clear()
+
         self.owner = User.objects.create_user(
             email="owner@example.com",
             first_name="Project",
@@ -68,6 +75,10 @@ class NotificationTests(APITestCase):
                 type=Notification.Type.TASK_REASSIGNED,
             ).exists()
         )
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, [self.new_assignee.email])
+        self.assertEqual(mail.outbox[0].subject, "TaskFlow - Task Assigned to You")
+        self.assertIn(task.title, mail.outbox[0].body)
 
     def test_updating_task_without_assignee_change_does_not_notify(self):
         task = Task.objects.create(
@@ -85,6 +96,25 @@ class NotificationTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertFalse(Notification.objects.exists())
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_unchanged_assignee_does_not_create_reassignment_notification_or_email(self):
+        task = Task.objects.create(
+            project=self.project,
+            title="Same assignee",
+            assignee=self.assignee,
+        )
+        self.authenticate(self.owner)
+
+        response = self.client.patch(
+            f"/api/tasks/{task.id}/",
+            {"assignee": self.assignee.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(Notification.objects.exists())
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_reassignment_notification_belongs_to_new_assignee(self):
         task = Task.objects.create(
@@ -103,6 +133,7 @@ class NotificationTests(APITestCase):
         notification = Notification.objects.get()
         self.assertEqual(notification.user, self.new_assignee)
         self.assertNotEqual(notification.user, self.assignee)
+        self.assertEqual(mail.outbox[0].to, [self.new_assignee.email])
 
     def test_overdue_task_creates_notification(self):
         task = Task.objects.create(
@@ -121,6 +152,10 @@ class NotificationTests(APITestCase):
                 type=Notification.Type.TASK_OVERDUE,
             ).exists()
         )
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, [self.assignee.email])
+        self.assertEqual(mail.outbox[0].subject, "TaskFlow - Task Overdue")
+        self.assertIn(task.title, mail.outbox[0].body)
 
     def test_completed_task_does_not_create_overdue_notification(self):
         Task.objects.create(
@@ -134,6 +169,7 @@ class NotificationTests(APITestCase):
         create_overdue_task_notifications.delay()
 
         self.assertFalse(Notification.objects.exists())
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_future_task_does_not_create_overdue_notification(self):
         Task.objects.create(
@@ -146,6 +182,7 @@ class NotificationTests(APITestCase):
         create_overdue_task_notifications.delay()
 
         self.assertFalse(Notification.objects.exists())
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_repeated_overdue_checks_do_not_create_duplicates(self):
         Task.objects.create(
@@ -159,6 +196,55 @@ class NotificationTests(APITestCase):
         create_overdue_task_notifications.delay()
 
         self.assertEqual(Notification.objects.count(), 1)
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_changing_task_status_creates_status_notification_and_email(self):
+        task = Task.objects.create(
+            project=self.project,
+            title="Status task",
+            assignee=self.assignee,
+            status=Task.Status.TODO,
+        )
+        self.authenticate(self.assignee)
+
+        response = self.client.patch(
+            f"/api/tasks/{task.id}/",
+            {"status": Task.Status.IN_PROGRESS},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        notification = Notification.objects.get(
+            task=task,
+            user=self.owner,
+            type=Notification.Type.TASK_STATUS_CHANGED,
+        )
+        self.assertIn("Todo -> In progress", notification.message)
+        self.assertIn(task.title, notification.message)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, [self.owner.email])
+        self.assertEqual(mail.outbox[0].subject, "TaskFlow - Task Status Updated")
+        self.assertIn("Todo -> In progress", mail.outbox[0].body)
+
+    def test_unrelated_task_update_does_not_create_status_notification_or_email(self):
+        task = Task.objects.create(
+            project=self.project,
+            title="No status change",
+            status=Task.Status.TODO,
+        )
+        self.authenticate(self.owner)
+
+        response = self.client.patch(
+            f"/api/tasks/{task.id}/",
+            {"title": "Still no status change"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(
+            Notification.objects.filter(type=Notification.Type.TASK_STATUS_CHANGED).exists()
+        )
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_user_only_sees_their_own_notifications(self):
         task = Task.objects.create(project=self.project, title="Visible")
