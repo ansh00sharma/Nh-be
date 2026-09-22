@@ -1,347 +1,325 @@
 # TaskFlow Backend
 
-TaskFlow is a Django REST Framework backend for a small task-management POC.
+TaskFlow Backend is a Django REST Framework API for a role-based task management product. It powers authentication, user management, project ownership, task assignment, dashboard access, notifications, health checks, metrics, Redis-backed caching, and asynchronous email workflows.
 
-It includes:
-- JWT authentication
-- Minimal manager/agent RBAC
-- Project CRUD
-- Task CRUD
-- Task filtering and pagination
-- Redis-backed task-list caching
-- Celery background jobs
-- Overdue task notifications
-- Task reassignment notifications
-- Task status-change notifications
-- Plain-text notification email delivery through Django SMTP
-- Notification listing
-- Health endpoint
-- Metrics endpoint
+The backend is designed for a frontend client that consumes JWT-protected APIs and displays different modules depending on the logged-in user's role.
 
-All JSON API responses use:
+## Core Functionality
+
+- User signup, login, logout, token refresh, and current-user profile APIs.
+- Role-based access control using Django groups.
+- Admin and manager user-management APIs.
+- Project CRUD for admins and managers.
+- Task CRUD with role-specific visibility and permissions.
+- Task filters by status, assignee, project, and due-date range.
+- Redis-backed caching for task list responses.
+- Notification records for task events.
+- Email notification delivery through Django's email backend.
+- Celery worker tasks for async notifications.
+- Celery Beat schedule for overdue-task notification scans.
+- API health checks for PostgreSQL and Redis.
+- Simple in-memory request metrics.
+- Standard JSON response envelope for API consistency.
+- Swagger UI, ReDoc, and OpenAPI schema generation.
+
+## Main Modules
+
+### `config`
+
+Project configuration for Django, URL routing, WSGI/ASGI, Celery, installed apps, database, Redis cache, CORS, email, JWT, and REST Framework settings.
+
+Important files:
+
+- `config/settings.py`
+- `config/urls.py`
+- `config/celery.py`
+
+### `api`
+
+Shared API infrastructure used across the project.
+
+Responsibilities:
+
+- Standard success/error response shape.
+- Standard JSON renderer.
+- DRF exception formatting.
+- Pagination defaults.
+- Health endpoint.
+- Metrics endpoint.
+- Metrics middleware.
+- OpenAPI schema exposure through `drf-spectacular`.
+
+Response shape:
 
 ```json
 {
-  "message": "Human readable message",
+  "message": "Request successful",
   "data": {},
   "status": "success",
   "status_code": 200
 }
 ```
 
-Errors use the same envelope with `"status": "error"` and `data: null`.
+Errors use the same shape with `"status": "error"` and `"data": null`.
 
-## RBAC Assumption
+### `users`
 
-The original assignment defines project ownership and task assignees, but does
-not define formal roles. For this POC, TaskFlow interprets those concepts as:
+Custom user model and authentication module.
 
-- Manager: the project owner who manages their own projects and the tasks in
-  those projects.
-- Agent: the task assignee who works on assigned tasks and can update task
-  status.
+Responsibilities:
 
-Roles are stored with Django Groups named `manager` and `agent`. Public signup
-always creates an `agent`; managers can be assigned through Django admin or a
-future seed command.
+- Email-based custom user model.
+- Signup and login.
+- JWT token generation through Simple JWT.
+- Logout with refresh-token blacklist support.
+- Current-user profile endpoint.
+- Admin/manager managed-user CRUD.
+- Role assignment through Django groups.
 
-## Requirements
+Roles:
 
-- Python 3.12
-- PostgreSQL
-- Redis
-- Docker and Docker Compose, optional for local setup
+- `admin`
+- `manager`
+- `agent`
 
-## Local Setup
+Module access:
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-```
+- Admin: `dashboard`, `users`, `projects`, `tasks`
+- Manager: `users`, `projects`, `tasks`
+- Agent: `tasks`
 
-Update `.env` with local PostgreSQL and Redis values, then run:
+### `projects`
 
-```bash
-python manage.py migrate
-python manage.py runserver
-```
+Project management module.
 
-Run Django checks and tests:
+Responsibilities:
 
-```bash
-python manage.py check
-python manage.py makemigrations --check --dry-run
-python manage.py test
-```
+- Create, list, retrieve, update, and delete projects.
+- Store project ownership through the `owner` user relation.
+- Restrict access by role.
 
-Run the local background processes from the backend directory in separate terminals.
-PostgreSQL and Redis must already be running, and `.env` should point to those
-local services.
+Access rules:
 
-Terminal 1, Django API:
+- Admins can access all projects.
+- Managers can access only their own projects.
+- Agents cannot access project CRUD directly.
 
-```bash
-source .venv/bin/activate
-python manage.py runserver
-```
+### `tasks`
 
-Terminal 2, Celery worker:
+Task management module.
 
-```bash
-source .venv/bin/activate
-celery -A config worker --loglevel=info
-```
+Responsibilities:
 
-Terminal 3, Celery Beat scheduler:
+- Create, list, retrieve, update, and delete tasks.
+- Assign tasks to users.
+- Track task status.
+- Store due dates.
+- Filter task lists.
+- Cache task list responses per user, role, cache version, and query string.
+- Invalidate task-list cache versions when task/project changes affect visible data.
+- Dispatch notification jobs when tasks are created, reassigned, or status changes.
 
-```bash
-source .venv/bin/activate
-celery -A config beat --loglevel=info
-```
+Task statuses:
 
-## Docker Setup
+- `todo`
+- `in_progress`
+- `done`
 
-Build the backend image:
+Access rules:
 
-```bash
-docker build -t taskflow-backend:local .
-```
+- Admins can access all tasks.
+- Managers can access tasks under projects they own.
+- Agents can access tasks assigned to them.
+- Admins and managers can create and delete tasks.
+- Agents can update task status, but cannot change project, assignee, title, description, or due date.
 
-Inspect the built image:
+### `notifications`
 
-```bash
-docker images taskflow-backend:local
-```
+Notification and email module.
 
-Run a Django check against the image:
+Responsibilities:
 
-```bash
-docker run --rm --env-file .env taskflow-backend:local python manage.py check
-```
+- Store task notifications.
+- List notifications for the authenticated user.
+- Send task-related emails.
+- Mark whether a notification has been sent.
+- Periodically scan overdue tasks through Celery Beat.
 
-If your `.env` points `POSTGRES_HOST=localhost`, prefer the Compose check below because containers should use the Compose service name `postgres`.
+Notification types:
 
-## Docker Compose
+- `task_created`
+- `task_overdue`
+- `task_reassigned`
+- `task_status_changed`
 
-Services:
-- `web`
-- `postgres`
-- `redis`
-- `celery_worker`
-- `celery_beat`
+Email templates live in `templates/emails/`.
 
-Build:
+### `dashboard`
 
-```bash
-docker compose build
-```
+Admin-only dashboard placeholder module.
 
-If your machine uses Docker Compose v1, use `docker-compose` in place of `docker compose`.
+Current behavior:
 
-Start PostgreSQL and Redis:
+- Provides an authenticated dashboard endpoint.
+- Allows access only for admins.
+- Returns placeholder dashboard data until real analytics are implemented.
 
-```bash
-docker compose up -d postgres redis
-```
+## Database
 
-Run migrations:
+The project uses PostgreSQL as the primary relational database.
 
-```bash
-docker compose run --rm web python manage.py migrate
-```
+Main data entities:
 
-Start everything:
+- `users.User`: custom user table using email as the login identifier.
+- `auth.Group`: stores TaskFlow roles: `admin`, `manager`, and `agent`.
+- `projects.Project`: project records owned by users.
+- `tasks.Task`: task records connected to projects and optional assignees.
+- `notifications.Notification`: task-event notifications connected to users and tasks.
+- Simple JWT blacklist tables: store blacklisted refresh tokens for logout.
+- Django built-in tables: sessions, permissions, content types, admin logs, and migrations.
 
-```bash
-docker compose up -d
-```
+Important relationships:
 
-Show running containers:
-
-```bash
-docker compose ps
-```
-
-Check logs:
-
-```bash
-docker compose logs web
-docker compose logs celery_worker
-docker compose logs celery_beat
-```
-
-Test health:
-
-```bash
-curl http://localhost:8000/api/health/
-```
-
-Expected shape:
-
-```json
-{
-  "message": "Service is healthy",
-  "data": {
-    "database": "healthy",
-    "redis": "healthy"
-  },
-  "status": "success",
-  "status_code": 200
-}
-```
-
-Test metrics:
-
-```bash
-curl http://localhost:8000/api/metrics/
-```
-
-Stop containers:
-
-```bash
-docker compose down
-```
-
-Remove containers and local PostgreSQL Docker volume:
-
-```bash
-docker compose down -v
-```
-
-`-v` deletes locally persisted PostgreSQL data.
-
-## Useful Pre-Push Docker Verification
-
-```bash
-docker compose down
-docker compose build --no-cache
-docker compose up -d postgres redis
-docker compose run --rm web python manage.py migrate
-docker compose run --rm web python manage.py check
-docker compose run --rm web python manage.py test
-docker compose up -d
-docker compose ps
-curl http://localhost:8000/api/health/
-```
-
-This confirms:
-- Image builds
-- PostgreSQL connects
-- Redis connects
-- Migrations work
-- Django checks pass
-- Tests pass
-- Web container starts
-- Health endpoint works
-- Celery worker starts
-- Celery Beat starts
-
-## API Summary
-
-Protected endpoints require:
-
-```text
-Authorization: Bearer <access_token>
-```
-
-Authentication:
-- `POST /api/auth/signup/`
-- `POST /api/auth/login/`
-- `POST /api/auth/token/refresh/`
-- `GET /api/auth/me/`
-
-Projects:
-- `POST /api/projects/`
-- `GET /api/projects/`
-- `GET /api/projects/{id}/`
-- `PUT /api/projects/{id}/`
-- `PATCH /api/projects/{id}/`
-- `DELETE /api/projects/{id}/`
-
-Tasks:
-- `POST /api/tasks/`
-- `GET /api/tasks/`
-- `GET /api/tasks/{id}/`
-- `PUT /api/tasks/{id}/`
-- `PATCH /api/tasks/{id}/`
-- `DELETE /api/tasks/{id}/`
-
-Supported task filters:
-
-```text
-/api/tasks/?status=todo
-/api/tasks/?status=in_progress
-/api/tasks/?status=done
-/api/tasks/?assignee=2
-/api/tasks/?project=1
-/api/tasks/?due_date_from=2026-09-20&due_date_to=2026-09-30
-```
-
-Pagination:
-
-```text
-/api/tasks/?page=2
-/api/tasks/?page_size=10
-```
-
-Notifications:
-- `GET /api/notifications/`
-
-Health and metrics:
+- A user can own many projects.
+- A project belongs to one owner.
+- A project can have many tasks.
+- A task belongs to one project.
+- A task may be assigned to one user.
+- A user can have many assigned tasks.
+- A user can have many notifications.
+- A notification belongs to one task and one user.
+
+## Redis
+
+Redis is used for two backend responsibilities:
+
+- Django cache backend for task-list caching and health checks.
+- Celery broker/result backend for background jobs.
+
+The `REDIS_URL` environment variable is shared by both Django cache and Celery.
+
+## Business Logic
+
+TaskFlow is structured around three operating roles.
+
+Admins supervise the whole system. They can see all projects and tasks, access the dashboard, manage users, and perform project/task operations according to API permissions.
+
+Managers own projects. They create projects, create tasks inside their own projects, assign tasks to agents, track work, and receive status-change notifications for their project tasks.
+
+Agents execute assigned work. They see only their own tasks and can move those tasks through statuses without being allowed to change ownership, assignment, title, description, project, or due date.
+
+Expected task lifecycle:
+
+1. An admin or manager creates a project.
+2. An admin or manager creates a task under an accessible project.
+3. The task may be assigned to an agent.
+4. A task-created notification is stored and emailed to the assignee.
+5. If the task is reassigned, the new assignee receives a reassignment notification.
+6. The assignee updates task status as work progresses.
+7. Status changes notify the project owner.
+8. Celery Beat periodically checks for overdue incomplete tasks.
+9. Overdue notifications are stored and emailed to the assignee.
+10. Task-list cache entries are invalidated when changes affect visible task data.
+
+## API Surface
+
+Base endpoints:
+
+- `GET /` and `GET /api/`
+- `GET /api/schema/`
+- `GET /api/docs/`
+- `GET /api/redoc/`
 - `GET /api/health/`
 - `GET /api/metrics/`
 
-## Manual SMTP Testing
+Authentication:
 
-Set SMTP values in `.env`. For Gmail SMTP, use an App Password when two-factor authentication is enabled.
+- `POST /api/auth/signup/`
+- `POST /api/auth/login/`
+- `POST /api/auth/logout/`
+- `POST /api/auth/token/refresh/`
+- `GET /api/auth/me/`
 
-```env
-EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=587
-EMAIL_USE_TLS=True
-EMAIL_HOST_USER=your-address@gmail.com
-EMAIL_HOST_PASSWORD=your-app-password
-DEFAULT_FROM_EMAIL=your-address@gmail.com
+Application modules:
+
+- `/api/dashboard/`
+- `/api/users/`
+- `/api/projects/`
+- `/api/tasks/`
+- `/api/notifications/`
+
+Most module endpoints require:
+
+```http
+Authorization: Bearer <access-token>
 ```
 
-Do not store real SMTP credentials in code.
+## API Documentation
 
-Run the stack:
+Swagger/OpenAPI documentation is generated with `drf-spectacular`.
 
-```bash
-docker compose up -d
-docker compose logs -f celery_worker celery_beat
-```
+Documentation endpoints:
 
-Trigger each notification type:
+- `GET /api/schema/`: raw OpenAPI schema.
+- `GET /api/docs/`: Swagger UI for browser-based API testing.
+- `GET /api/redoc/`: ReDoc API reference.
+
+For protected endpoints, log in through `POST /api/auth/login/`, copy the returned access token, open `/api/docs/`, click `Authorize`, and enter:
 
 ```text
-Task reassignment: update a task assignee to another user.
-Task status change: update a task status, for example todo -> in_progress.
-Overdue task: create or update an assigned task with due_date in the past and status not done, then wait for Celery Beat.
+Bearer <access-token>
 ```
 
-Expected result:
+## Background Jobs
 
-```text
-A notification row appears through GET /api/notifications/.
-The Celery worker logs the notification task.
-The intended recipient receives a plain-text email.
-```
+Celery tasks are defined in `notifications/tasks.py`.
 
-## Architecture Notes
+Current jobs:
 
-DRF was selected for conventional API development. JWT works well with a separate React frontend. PostgreSQL stores application data. Redis provides task-list caching and Celery infrastructure. User/version-based cache invalidation prevents stale task-list reads. Celery keeps notification processing outside the request-response cycle.
+- Create task-created notifications.
+- Create task-reassigned notifications.
+- Create task-status-changed notifications.
+- Scan overdue tasks and send overdue notifications.
 
-## Deployment Notes
+Celery Beat schedule:
 
-A reasonable production setup would include:
-- Nginx
-- Gunicorn/Django container
-- PostgreSQL
-- Redis
-- Celery worker
-- Celery Beat
+- `create_overdue_task_notifications` runs every 60 seconds.
+
+## Environment Variables
+
+The backend reads environment values from `.env` automatically during local development.
+
+Required core values:
+
+- `SECRET_KEY`
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_HOST`
+- `POSTGRES_PORT`
+- `REDIS_URL`
+
+Common optional values:
+
+- `DEBUG`
+- `CORS_ALLOWED_ORIGINS`
+- `EMAIL_BACKEND`
+- `EMAIL_HOST`
+- `EMAIL_PORT`
+- `EMAIL_USE_TLS`
+- `EMAIL_HOST_USER`
+- `EMAIL_HOST_PASSWORD`
+- `DEFAULT_FROM_EMAIL`
+
+See `STARTER.md` for local setup commands.
+
+## Production Notes
+
+- Replace all development secrets before deployment.
+- Review and remove demo seed credentials before production use.
+- Set a production-safe `SECRET_KEY`.
+- Restrict `ALLOWED_HOSTS`; it is currently permissive in code.
+- Set `DEBUG=False`.
+- Configure production `CORS_ALLOWED_ORIGINS`.
+- Use managed PostgreSQL and Redis where possible.
+- Run Celery worker and Celery Beat as separate long-running processes.

@@ -1,4 +1,6 @@
 from django.contrib.auth import get_user_model
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.mixins import (
@@ -28,9 +30,26 @@ from users.roles import is_admin_or_manager
 User = get_user_model()
 
 
+logout_request = inline_serializer(
+    name="LogoutRequest",
+    fields={"refresh": serializers.CharField(required=False, allow_blank=True)},
+)
+
+logout_response = inline_serializer(
+    name="LogoutResponse",
+    fields={
+        "message": serializers.CharField(),
+        "data": serializers.JSONField(allow_null=True),
+        "status": serializers.CharField(),
+        "status_code": serializers.IntegerField(),
+    },
+)
+
+
 class SignupView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(request=SignupSerializer, responses={201: UserSerializer}, tags=["Auth"])
     def post(self, request):
         serializer = SignupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -41,6 +60,7 @@ class SignupView(APIView):
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(request=LoginSerializer, responses=LoginSerializer, tags=["Auth"])
     def post(self, request):
         serializer = LoginSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
@@ -50,6 +70,7 @@ class LoginView(APIView):
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=logout_request, responses=logout_response, tags=["Auth"])
     def post(self, request):
         refresh_token = request.data.get("refresh")
 
@@ -65,6 +86,7 @@ class LogoutView(APIView):
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses=UserSerializer, tags=["Auth"])
     def get(self, request):
         return Response(UserSerializer(request.user).data)
 

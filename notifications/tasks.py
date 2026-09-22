@@ -12,6 +12,7 @@ from tasks.models import Task
 logger = logging.getLogger(__name__)
 User = get_user_model()
 IST_TIME_ZONE = ZoneInfo("Asia/Kolkata")
+TASKFLOW_PRODUCTION_TASKS_URL = "http://13.127.86.130/tasks"
 
 
 @shared_task
@@ -210,6 +211,7 @@ def _plain_task_message(heading, task, assigned_by=None):
 def _task_email_context(task, assigned_by=None, event_label="", old_status=None, new_status=None):
     return {
         "event_label": event_label,
+        "task_url": f"{TASKFLOW_PRODUCTION_TASKS_URL}?task={task.id}",
         "task_name": task.title,
         "description": task.description or "-",
         "project_name": task.project.name,
