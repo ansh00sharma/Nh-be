@@ -61,7 +61,7 @@ class NotificationTests(APITestCase):
     def assert_email_has_view_ticket_link(self, task):
         html_message = mail.outbox[0].alternatives[0][0]
         self.assertIn("View Ticket", html_message)
-        self.assertIn(f"http://13.127.86.130/tasks?task={task.id}", html_message)
+        self.assertIn(f"http://15.252.221.30/tasks?task={task.id}", html_message)
 
     def test_creating_assigned_task_creates_notification_and_email(self):
         self.authenticate(self.owner)
