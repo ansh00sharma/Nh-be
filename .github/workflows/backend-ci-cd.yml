@@ -287,18 +287,14 @@ jobs:
             printf 'export DOCKERHUB_REPOSITORY=%q\n' "$DOCKERHUB_REPOSITORY"
             printf 'export IMAGE_TAG=%q\n' "$IMAGE_TAG"
 
-
             cat <<'REMOTE_SCRIPT'
-
           set -euo pipefail
 
           echo "========================================="
           echo "Starting TaskFlow backend deployment"
           echo "========================================="
 
-
           cd "$HOME/taskflow"
-
 
           # ====================================================
           # Docker image
@@ -306,10 +302,8 @@ jobs:
 
           export DOCKER_IMAGE="${DOCKERHUB_USERNAME}/${DOCKERHUB_REPOSITORY}:${IMAGE_TAG}"
 
-
           echo "Deploying image:"
           echo "$DOCKER_IMAGE"
-
 
           # ====================================================
           # Docker Hub login
@@ -322,7 +316,6 @@ jobs:
               --username "$DOCKERHUB_USERNAME" \
               --password-stdin
 
-
           # ====================================================
           # Pull exact backend image created from this commit
           # ====================================================
@@ -330,7 +323,6 @@ jobs:
           echo "Pulling backend image..."
 
           docker compose pull backend
-
 
           # ====================================================
           # Start Redis
@@ -342,7 +334,6 @@ jobs:
           echo "Starting Redis..."
 
           docker compose up -d redis
-
 
           # ====================================================
           # Wait until Redis is healthy
@@ -358,24 +349,17 @@ jobs:
               taskflow-redis 2>/dev/null || echo starting)" \
             = "healthy" \
           ]; do
-
             REDIS_ATTEMPTS=$((REDIS_ATTEMPTS + 1))
 
             if [ "$REDIS_ATTEMPTS" -ge 30 ]; then
-
               echo "Redis failed to become healthy."
-
               docker logs --tail 100 taskflow-redis || true
-
               exit 1
             fi
 
             echo "Redis is still starting..."
-
             sleep 2
-
           done
-
 
           echo "Redis is healthy."
 
@@ -399,7 +383,6 @@ jobs:
             --force-recreate \
             backend
 
-
           # ====================================================
           # Wait until backend becomes healthy
           # ====================================================
@@ -414,38 +397,27 @@ jobs:
               taskflow-backend 2>/dev/null || echo starting)" \
             = "healthy" \
           ]; do
-
             BACKEND_ATTEMPTS=$((BACKEND_ATTEMPTS + 1))
 
             if [ "$BACKEND_ATTEMPTS" -ge 30 ]; then
-
               echo "ERROR: Backend failed to become healthy."
-
               echo ""
               echo "Container status:"
-
               docker ps -a \
                 --filter name=taskflow-backend
-
               echo ""
               echo "Backend logs:"
-
               docker logs \
                 --tail 200 \
                 taskflow-backend || true
-
               exit 1
             fi
 
             echo "Backend is still starting..."
-
             sleep 2
-
           done
 
-
           echo "Backend is healthy."
-
 
           # ====================================================
           # Show container status
@@ -463,7 +435,6 @@ jobs:
 
           docker image prune -f
 
-
           # ====================================================
           # Logout from Docker Hub
           # ====================================================
@@ -474,7 +445,12 @@ jobs:
           echo "========================================="
           echo "TaskFlow backend deployment successful"
           echo "========================================="
-                    
+          REMOTE_SCRIPT
+          } | ssh \
+            -i ~/.ssh/ec2_key \
+            "$EC2_USER@$EC2_HOST" \
+            'bash -se'
+
 
       # --------------------------------------------------------
       # Remove local SSH key from GitHub runner
