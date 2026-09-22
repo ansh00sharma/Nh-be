@@ -379,60 +379,55 @@ jobs:
 
           echo "Redis is healthy."
 
-
           # ====================================================
-          # Run Django migrations
+          # Start/recreate permanent backend container
           #
-          # Database is Supabase, not local Docker PostgreSQL.
+          # The container entrypoint itself will:
+          #
+          # 1. Run Django migrations
+          # 2. Start Gunicorn
           # ====================================================
 
-          echo "Running Django migrations..."
-
-          docker compose run --rm backend \
-            python manage.py migrate --noinput
-
-          echo "Migrations completed successfully."
-
-
-          # ====================================================
-          # Start permanent backend container
-          # ====================================================
-
+          echo ""
           echo "========================================="
-          echo "Starting backend container"
+          echo "Starting TaskFlow backend"
           echo "========================================="
 
-          docker compose up -d --no-deps --force-recreate backend
+          docker compose up \
+            -d \
+            --no-deps \
+            --force-recreate \
+            backend
 
 
           # ====================================================
-          # Give Gunicorn time to boot
+          # Wait until backend becomes healthy
           # ====================================================
 
-          echo "Waiting for backend to start..."
+          echo "Waiting for backend to become healthy..."
 
-          sleep 5
+          BACKEND_ATTEMPTS=0
 
+          until [ \
+            "$(docker inspect \
+              --format='{{.State.Health.Status}}' \
+              taskflow-backend 2>/dev/null || echo starting)" \
+            = "healthy" \
+          ]; do
 
-          # ====================================================
-          # Verify backend is running
-          # ====================================================
+            BACKEND_ATTEMPTS=$((BACKEND_ATTEMPTS + 1))
 
-          echo "========================================="
-          echo "Checking backend container"
-          echo "========================================="
+            if [ "$BACKEND_ATTEMPTS" -ge 30 ]; then
 
-          if ! docker ps \
-            --format '{{.Names}}' \
-            | grep -qx 'taskflow-backend'; then
+              echo "ERROR: Backend failed to become healthy."
 
-              echo "ERROR: taskflow-backend failed to start."
-
+              echo ""
               echo "Container status:"
 
               docker ps -a \
                 --filter name=taskflow-backend
 
+              echo ""
               echo "Backend logs:"
 
               docker logs \
@@ -440,61 +435,46 @@ jobs:
                 taskflow-backend || true
 
               exit 1
-          fi
+            fi
+
+            echo "Backend is still starting..."
+
+            sleep 2
+
+          done
 
 
-          echo "Backend container is running successfully."
+          echo "Backend is healthy."
 
 
           # ====================================================
-          # Show deployment status
+          # Show container status
           # ====================================================
 
           echo ""
           echo "========================================="
-          echo "Running TaskFlow containers"
+          echo "TaskFlow containers"
           echo "========================================="
 
           docker compose ps
 
-
           echo ""
-          echo "========================================="
-          echo "Latest backend logs"
-          echo "========================================="
-
-          docker logs \
-            --tail 50 \
-            taskflow-backend
-
-
-          # ====================================================
-          # Cleanup dangling images
-          # ====================================================
-
-          echo "Cleaning old Docker images..."
+          echo "Cleaning unused Docker images..."
 
           docker image prune -f
 
 
           # ====================================================
-          # Docker Hub logout
+          # Logout from Docker Hub
           # ====================================================
 
           docker logout || true
 
-
           echo ""
           echo "========================================="
-          echo "TaskFlow backend deployment complete"
+          echo "TaskFlow backend deployment successful"
           echo "========================================="
-
-          REMOTE_SCRIPT
-
-          } | ssh \
-              -i ~/.ssh/ec2_key \
-              "$EC2_USER@$EC2_HOST" \
-              'bash -s'
+                    
 
       # --------------------------------------------------------
       # Remove local SSH key from GitHub runner
