@@ -3,6 +3,8 @@ from urllib.parse import urlencode
 
 from django.core.cache import cache
 
+from users.roles import get_taskflow_role
+
 
 TASK_LIST_CACHE_TTL_SECONDS = 300
 
@@ -46,6 +48,7 @@ def make_task_list_cache_key(request):
 
     query_string = urlencode(query_items, doseq=True)
     version = get_task_list_cache_version(request.user.id)
-    raw_key = f"user={request.user.id}:version={version}:query={query_string}"
+    role = get_taskflow_role(request.user) or "none"
+    raw_key = f"user={request.user.id}:role={role}:version={version}:query={query_string}"
     digest = sha256(raw_key.encode()).hexdigest()
     return f"tasks:list:{digest}"

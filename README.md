@@ -76,15 +76,28 @@ python manage.py makemigrations --check --dry-run
 python manage.py test
 ```
 
-Run Celery worker:
+Run the local background processes from the backend directory in separate terminals.
+PostgreSQL and Redis must already be running, and `.env` should point to those
+local services.
+
+Terminal 1, Django API:
 
 ```bash
+source .venv/bin/activate
+python manage.py runserver
+```
+
+Terminal 2, Celery worker:
+
+```bash
+source .venv/bin/activate
 celery -A config worker --loglevel=info
 ```
 
-Run Celery Beat:
+Terminal 3, Celery Beat scheduler:
 
 ```bash
+source .venv/bin/activate
 celery -A config beat --loglevel=info
 ```
 

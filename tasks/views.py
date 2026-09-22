@@ -98,6 +98,7 @@ class TaskViewSet(ModelViewSet):
         cache_key = make_task_list_cache_key(request)
         cached_data = cache.get(cache_key)
         if cached_data is not None:
+            print(f"[TASK CACHE HIT] user={request.user.id} key={cache_key}")
             return Response(cached_data)
 
         response = super().list(request, *args, **kwargs)

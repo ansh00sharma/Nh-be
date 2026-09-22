@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
+    "dashboard",
     "users",
     "api",
     "projects",
@@ -185,7 +186,7 @@ REST_FRAMEWORK = {
     ],
     "EXCEPTION_HANDLER": "api.exceptions.standard_exception_handler",
     "DEFAULT_PAGINATION_CLASS": "api.pagination.StandardPageNumberPagination",
-    "PAGE_SIZE": 20,
+    "PAGE_SIZE": 10,
     "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%SZ",
     "DATETIME_INPUT_FORMATS": ["iso-8601"],
 }

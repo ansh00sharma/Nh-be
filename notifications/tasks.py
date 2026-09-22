@@ -26,18 +26,14 @@ def create_task_created_notification(task_id, assignee_id, assigned_by_id=None):
         task=task,
         assigned_by=assigned_by,
     )
-    Notification.objects.create(
-        user_id=assignee_id,
+    _create_notification_and_send_email(
+        user=task.assignee,
         task=task,
-        type=Notification.Type.TASK_CREATED,
+        notification_type=Notification.Type.TASK_CREATED,
         message=message,
-    )
-    send_notification_email(
-        task.assignee,
-        "TaskFlow - New Task Created",
-        message,
-        "emails/task_created.html",
-        _task_email_context(task, assigned_by=assigned_by, event_label="New Task"),
+        subject="TaskFlow - New Task Created",
+        template_name="emails/task_created.html",
+        context=_task_email_context(task, assigned_by=assigned_by, event_label="New Task"),
     )
 
 
@@ -53,18 +49,14 @@ def create_task_reassigned_notification(task_id, assignee_id, assigned_by_id=Non
         task=task,
         assigned_by=assigned_by,
     )
-    Notification.objects.create(
-        user_id=assignee_id,
+    _create_notification_and_send_email(
+        user=task.assignee,
         task=task,
-        type=Notification.Type.TASK_REASSIGNED,
+        notification_type=Notification.Type.TASK_REASSIGNED,
         message=message,
-    )
-    send_notification_email(
-        task.assignee,
-        "TaskFlow - Task Reassigned to You",
-        message,
-        "emails/task_reassigned.html",
-        _task_email_context(task, assigned_by=assigned_by, event_label="Task Reassigned"),
+        subject="TaskFlow - Task Reassigned to You",
+        template_name="emails/task_reassigned.html",
+        context=_task_email_context(task, assigned_by=assigned_by, event_label="Task Reassigned"),
     )
 
 
@@ -82,18 +74,14 @@ def create_task_status_changed_notification(task_id, old_status, new_status, cha
         f"Status: {_status_label(old_status)} -> {_status_label(new_status)}\n"
         f"Assignee: {assignee_name}"
     )
-    Notification.objects.create(
+    _create_notification_and_send_email(
         user=task.project.owner,
         task=task,
-        type=Notification.Type.TASK_STATUS_CHANGED,
+        notification_type=Notification.Type.TASK_STATUS_CHANGED,
         message=message,
-    )
-    send_notification_email(
-        task.project.owner,
-        "TaskFlow - Task Status Updated",
-        message,
-        "emails/task_status_changed.html",
-        _task_email_context(
+        subject="TaskFlow - Task Status Updated",
+        template_name="emails/task_status_changed.html",
+        context=_task_email_context(
             task,
             assigned_by=changed_by,
             event_label="Status Updated",
@@ -105,31 +93,26 @@ def create_task_status_changed_notification(task_id, old_status, new_status, cha
 
 @shared_task
 def create_overdue_task_notifications():
+    now = timezone.now()
     overdue_tasks = Task.objects.filter(
-        due_date__lt=timezone.now(),
+        due_date__lt=now,
         assignee__isnull=False,
     ).exclude(status=Task.Status.DONE).select_related("assignee", "project")
+    future_due_count = Task.objects.filter(
+        due_date__gte=now,
+        assignee__isnull=False,
+    ).exclude(status=Task.Status.DONE).count()
 
-    overdue_count = overdue_tasks.count()
-    logger.info("Overdue notification scan found %s task(s).", overdue_count)
-
-    created_count = 0
-    skipped_count = 0
-    email_sent_count = 0
-    email_failed_count = 0
+    notifications_send = 0
 
     for task in overdue_tasks:
-        already_notified = Notification.objects.filter(
+        notification = Notification.objects.filter(
+            user=task.assignee,
             task=task,
             type=Notification.Type.TASK_OVERDUE,
-        ).exists()
-        if already_notified:
-            skipped_count += 1
-            logger.info(
-                "Skipping overdue task notification for task_id=%s assignee_id=%s: already notified.",
-                task.id,
-                task.assignee_id,
-            )
+        ).first()
+
+        if notification and notification.is_read_by_system and notification.is_send:
             continue
 
         message = _plain_task_message(
@@ -137,41 +120,78 @@ def create_overdue_task_notifications():
             task=task,
             assigned_by=task.project.owner,
         )
-        Notification.objects.create(
-            user=task.assignee,
-            task=task,
-            type=Notification.Type.TASK_OVERDUE,
-            message=message,
-        )
-        email_sent = send_notification_email(
+
+        if notification:
+            notification.message = message
+            notification.is_read_by_system = True
+            notification.save(update_fields=["message", "is_read_by_system"])
+        else:
+            notification = Notification.objects.create(
+                user=task.assignee,
+                task=task,
+                type=Notification.Type.TASK_OVERDUE,
+                message=message,
+                is_read_by_system=True,
+                is_send=False,
+            )
+
+        email_sent = _send_and_mark_notification(
+            notification,
             task.assignee,
             "TaskFlow - Task Overdue",
             message,
             "emails/task_overdue.html",
             _task_email_context(task, assigned_by=task.project.owner, event_label="Task Overdue"),
         )
-        created_count += 1
         if email_sent:
-            email_sent_count += 1
-        else:
-            email_failed_count += 1
-        logger.info(
-            "Created overdue notification for task_id=%s assignee_id=%s email_sent=%s due_date_ist=%s.",
-            task.id,
-            task.assignee_id,
-            email_sent,
-            _format_due_date(task.due_date),
-        )
+            notifications_send += 1
 
     summary = {
-        "overdue_found": overdue_count,
-        "notifications_created": created_count,
-        "duplicates_skipped": skipped_count,
-        "emails_sent": email_sent_count,
-        "emails_failed": email_failed_count,
+        "future_due_found": future_due_count,
+        "notifications_send": notifications_send,
     }
     logger.info("Overdue notification scan finished: %s", summary)
     return summary
+
+
+def _create_notification_and_send_email(
+    user,
+    task,
+    notification_type,
+    message,
+    subject,
+    template_name,
+    context,
+):
+    notification = Notification.objects.create(
+        user=user,
+        task=task,
+        type=notification_type,
+        message=message,
+        is_read_by_system=True,
+        is_send=False,
+    )
+    return _send_and_mark_notification(
+        notification,
+        user,
+        subject,
+        message,
+        template_name,
+        context,
+    )
+
+
+def _send_and_mark_notification(notification, user, subject, message, template_name, context):
+    email_sent = send_notification_email(
+        user,
+        subject,
+        message,
+        template_name,
+        context,
+    )
+    notification.is_send = email_sent
+    notification.save(update_fields=["is_send"])
+    return email_sent
 
 
 def _plain_task_message(heading, task, assigned_by=None):

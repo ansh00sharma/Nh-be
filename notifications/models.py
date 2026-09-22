@@ -21,6 +21,8 @@ class Notification(models.Model):
     )
     type = models.CharField(max_length=32, choices=Type.choices)
     message = models.TextField()
+    is_read_by_system = models.BooleanField(default=False)
+    is_send = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
