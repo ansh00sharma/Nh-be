@@ -69,6 +69,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "api.middleware.RequestTimingMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -211,3 +212,9 @@ SIMPLE_JWT = {
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+REQUEST_TIMING_ENABLED = env_bool("REQUEST_TIMING_ENABLED", default=False)
+REQUEST_TIMING_SLOW_SQL_THRESHOLD_SECONDS = float(
+    env("REQUEST_TIMING_SLOW_SQL_THRESHOLD_SECONDS", "0.1")
+)
+PROJECT_LIST_CACHE_TTL = int(env("PROJECT_LIST_CACHE_TTL", "300"))

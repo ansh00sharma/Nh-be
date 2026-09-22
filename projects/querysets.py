@@ -1,10 +1,23 @@
 from projects.models import Project
-from users.roles import is_admin, is_manager
+from users.roles import ADMIN, MANAGER, get_taskflow_role
+
+
+PROJECT_SERIALIZED_FIELDS = (
+    "id",
+    "name",
+    "description",
+    "owner_id",
+    "created_at",
+    "updated_at",
+)
 
 
 def get_project_queryset_for_user(user):
-    if is_admin(user):
-        return Project.objects.all()
-    if is_manager(user):
-        return Project.objects.filter(owner=user)
+    role = get_taskflow_role(user)
+    queryset = Project.objects.only(*PROJECT_SERIALIZED_FIELDS)
+
+    if role == ADMIN:
+        return queryset
+    if role == MANAGER:
+        return queryset.filter(owner_id=user.id)
     return Project.objects.none()

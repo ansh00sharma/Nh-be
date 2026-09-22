@@ -21,16 +21,23 @@ def assign_taskflow_role(user, role):
     group = get_or_create_role_group(role)
     user.groups.remove(*Group.objects.filter(name__in=TASKFLOW_ROLES))
     user.groups.add(group)
+    if hasattr(user, "_taskflow_role_cache"):
+        delattr(user, "_taskflow_role_cache")
 
 
 def get_taskflow_role(user):
     if not user or not user.is_authenticated:
         return None
 
+    if hasattr(user, "_taskflow_role_cache"):
+        return user._taskflow_role_cache
+
     role_names = set(user.groups.filter(name__in=TASKFLOW_ROLES).values_list("name", flat=True))
     for role in TASKFLOW_ROLES:
         if role in role_names:
+            user._taskflow_role_cache = role
             return role
+    user._taskflow_role_cache = None
     return None
 
 
