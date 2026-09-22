@@ -203,7 +203,6 @@ class NotificationTests(APITestCase):
         self.assertTrue(notification.is_send)
         self.assertEqual(result["future_due_found"], 0)
         self.assertEqual(result["notifications_send"], 1)
-        self.assertEqual(result["total_notification"], 1)
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(mail.outbox[0].to, [self.assignee.email])
         self.assertEqual(mail.outbox[0].subject, "TaskFlow - Task Overdue")
@@ -237,7 +236,6 @@ class NotificationTests(APITestCase):
         self.assertFalse(Notification.objects.exists())
         self.assertEqual(result["future_due_found"], 1)
         self.assertEqual(result["notifications_send"], 0)
-        self.assertEqual(result["total_notification"], 1)
         self.assertEqual(len(mail.outbox), 0)
 
     def test_repeated_overdue_checks_do_not_create_duplicates(self):
@@ -253,9 +251,7 @@ class NotificationTests(APITestCase):
 
         self.assertEqual(Notification.objects.count(), 1)
         self.assertEqual(first_result["notifications_send"], 1)
-        self.assertEqual(first_result["total_notification"], 1)
         self.assertEqual(second_result["notifications_send"], 0)
-        self.assertEqual(second_result["total_notification"], 0)
         self.assertEqual(len(mail.outbox), 1)
 
     def test_overdue_check_retries_existing_unsent_notification(self):
@@ -281,7 +277,6 @@ class NotificationTests(APITestCase):
         self.assertTrue(notification.is_read_by_system)
         self.assertTrue(notification.is_send)
         self.assertEqual(result["notifications_send"], 1)
-        self.assertEqual(result["total_notification"], 1)
         self.assertEqual(len(mail.outbox), 1)
 
     def test_overdue_check_tracks_failed_email(self):
@@ -303,7 +298,6 @@ class NotificationTests(APITestCase):
         self.assertTrue(notification.is_read_by_system)
         self.assertFalse(notification.is_send)
         self.assertEqual(result["notifications_send"], 0)
-        self.assertEqual(result["total_notification"], 0)
 
     def test_changing_task_status_creates_status_notification_and_email(self):
         task = Task.objects.create(

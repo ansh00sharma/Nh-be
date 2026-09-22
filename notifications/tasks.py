@@ -149,7 +149,6 @@ def create_overdue_task_notifications():
     summary = {
         "future_due_found": future_due_count,
         "notifications_send": notifications_send,
-        "total_notification": future_due_count + notifications_send,
     }
     logger.info("Overdue notification scan finished: %s", summary)
     return summary
