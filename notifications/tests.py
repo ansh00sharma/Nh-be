@@ -58,6 +58,11 @@ class NotificationTests(APITestCase):
         access_token = RefreshToken.for_user(user).access_token
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
 
+    def assert_email_has_view_ticket_link(self, task):
+        html_message = mail.outbox[0].alternatives[0][0]
+        self.assertIn("View Ticket", html_message)
+        self.assertIn(f"http://13.127.86.130/tasks?task={task.id}", html_message)
+
     def test_creating_assigned_task_creates_notification_and_email(self):
         self.authenticate(self.owner)
 
@@ -87,6 +92,7 @@ class NotificationTests(APITestCase):
         self.assertIn(task.title, mail.outbox[0].body)
         self.assertEqual(mail.outbox[0].alternatives[0][1], "text/html")
         self.assertIn("New task created", mail.outbox[0].alternatives[0][0])
+        self.assert_email_has_view_ticket_link(task)
 
     def test_creating_unassigned_task_does_not_create_notification_or_email(self):
         self.authenticate(self.owner)
@@ -128,6 +134,7 @@ class NotificationTests(APITestCase):
         self.assertEqual(mail.outbox[0].subject, "TaskFlow - Task Reassigned to You")
         self.assertIn(task.title, mail.outbox[0].body)
         self.assertEqual(mail.outbox[0].alternatives[0][1], "text/html")
+        self.assert_email_has_view_ticket_link(task)
 
     def test_updating_task_without_assignee_change_does_not_notify(self):
         task = Task.objects.create(
@@ -208,6 +215,7 @@ class NotificationTests(APITestCase):
         self.assertEqual(mail.outbox[0].subject, "TaskFlow - Task Overdue")
         self.assertIn(task.title, mail.outbox[0].body)
         self.assertEqual(mail.outbox[0].alternatives[0][1], "text/html")
+        self.assert_email_has_view_ticket_link(task)
 
     def test_completed_task_does_not_create_overdue_notification(self):
         Task.objects.create(
@@ -329,6 +337,7 @@ class NotificationTests(APITestCase):
         self.assertEqual(mail.outbox[0].subject, "TaskFlow - Task Status Updated")
         self.assertIn("Todo -> In progress", mail.outbox[0].body)
         self.assertEqual(mail.outbox[0].alternatives[0][1], "text/html")
+        self.assert_email_has_view_ticket_link(task)
 
     def test_unrelated_task_update_does_not_create_status_notification_or_email(self):
         task = Task.objects.create(
