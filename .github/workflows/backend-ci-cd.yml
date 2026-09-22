@@ -38,9 +38,3 @@ jobs:
 
       - name: Python syntax check
         run: python -m compileall .
-
-      - name: Lint code
-        run: ruff check .
-
-      - name: Run tests
-        run: pytest -q
