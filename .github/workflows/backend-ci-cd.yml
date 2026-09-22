@@ -391,67 +391,72 @@ jobs:
           docker compose run --rm backend \
             python manage.py migrate --noinput
 
-
-          # ====================================================
-          # Start / recreate backend
-          #
-          # Container:
-          # taskflow-backend
-          # ====================================================
-
-          echo "Starting TaskFlow backend..."
-
-          docker compose up \
-            -d \
-            --remove-orphans \
-            backend
+          echo "Migrations completed successfully."
 
 
           # ====================================================
-          # Wait for Gunicorn / Django to start
+          # Start permanent backend container
           # ====================================================
 
-          echo "Waiting for backend container..."
+          echo "========================================="
+          echo "Starting backend container"
+          echo "========================================="
+
+          docker compose up -d --no-deps --force-recreate backend
+
+
+          # ====================================================
+          # Give Gunicorn time to boot
+          # ====================================================
+
+          echo "Waiting for backend to start..."
 
           sleep 5
 
 
           # ====================================================
-          # Verify backend container
+          # Verify backend is running
           # ====================================================
+
+          echo "========================================="
+          echo "Checking backend container"
+          echo "========================================="
 
           if ! docker ps \
             --format '{{.Names}}' \
             | grep -qx 'taskflow-backend'; then
 
-            echo "Backend container failed to start."
+              echo "ERROR: taskflow-backend failed to start."
 
-            echo "Backend logs:"
-            docker logs --tail 100 taskflow-backend || true
+              echo "Container status:"
 
-            exit 1
+              docker ps -a \
+                --filter name=taskflow-backend
 
+              echo "Backend logs:"
+
+              docker logs \
+                --tail 200 \
+                taskflow-backend || true
+
+              exit 1
           fi
 
 
-          echo "Backend container is running."
+          echo "Backend container is running successfully."
 
 
           # ====================================================
-          # Show containers
+          # Show deployment status
           # ====================================================
 
           echo ""
           echo "========================================="
-          echo "Container status"
+          echo "Running TaskFlow containers"
           echo "========================================="
 
           docker compose ps
 
-
-          # ====================================================
-          # Show backend logs
-          # ====================================================
 
           echo ""
           echo "========================================="
@@ -459,21 +464,21 @@ jobs:
           echo "========================================="
 
           docker logs \
-            --tail 30 \
-            taskflow-backend || true
+            --tail 50 \
+            taskflow-backend
 
 
           # ====================================================
-          # Cleanup old dangling images
+          # Cleanup dangling images
           # ====================================================
 
-          echo "Cleaning unused images..."
+          echo "Cleaning old Docker images..."
 
           docker image prune -f
 
 
           # ====================================================
-          # Logout from Docker Hub
+          # Docker Hub logout
           # ====================================================
 
           docker logout || true
@@ -481,7 +486,7 @@ jobs:
 
           echo ""
           echo "========================================="
-          echo "TaskFlow backend deployed successfully"
+          echo "TaskFlow backend deployment complete"
           echo "========================================="
 
           REMOTE_SCRIPT
