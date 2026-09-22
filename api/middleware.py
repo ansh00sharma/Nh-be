@@ -1,13 +1,17 @@
-import logging
 import time
 
 from django.conf import settings
 from django.db import connection
 
 from api.metrics import record_request
-
-
-logger = logging.getLogger(__name__)
+from api.profiling import (
+    QueryTimingWrapper,
+    RequestProfile,
+    add_profile_time,
+    log_request_profile,
+    reset_current_profile,
+    set_current_profile,
+)
 
 
 class RequestTimingMiddleware:
@@ -18,46 +22,41 @@ class RequestTimingMiddleware:
         if not settings.REQUEST_TIMING_ENABLED:
             return self.get_response(request)
 
-        query_count = 0
-        db_duration = 0.0
-        slow_queries = []
-        slow_sql_threshold = settings.REQUEST_TIMING_SLOW_SQL_THRESHOLD_SECONDS
-        request_started_at = time.perf_counter()
-        status_code = 500
-
-        def execute_wrapper(execute, sql, params, many, context):
-            nonlocal query_count, db_duration
-
-            query_started_at = time.perf_counter()
-            try:
-                return execute(sql, params, many, context)
-            finally:
-                query_duration = time.perf_counter() - query_started_at
-                query_count += 1
-                db_duration += query_duration
-
-                if query_duration >= slow_sql_threshold:
-                    slow_queries.append((query_duration, _clean_sql(sql)))
+        profile = RequestProfile(method=request.method, path=request.path)
+        profile.query_tracker = QueryTimingWrapper(
+            settings.REQUEST_TIMING_SLOW_SQL_THRESHOLD_SECONDS
+        )
+        profile_token = set_current_profile(profile)
 
         try:
-            with connection.execute_wrapper(execute_wrapper):
+            with connection.execute_wrapper(profile.query_tracker):
                 response = self.get_response(request)
-                status_code = response.status_code
+                profile.status_code = response.status_code
                 return response
         finally:
-            total_duration = time.perf_counter() - request_started_at
-            logger.warning(
-                "[REQUEST TIMING] %s %s status=%s total=%.3fs db=%.3fs queries=%s",
-                request.method,
-                request.path,
-                status_code,
-                total_duration,
-                db_duration,
-                query_count,
-            )
+            log_request_profile(profile)
+            reset_current_profile(profile_token)
 
-            for query_duration, sql in slow_queries:
-                logger.warning("[SLOW SQL] duration=%.3fs sql=%s", query_duration, sql)
+    def process_template_response(self, request, response):
+        if not settings.REQUEST_TIMING_ENABLED:
+            return response
+        if not hasattr(response, "render"):
+            return response
+
+        original_render = response.render
+
+        def profiled_render(*args, **kwargs):
+            render_started_at = time.perf_counter()
+            try:
+                return original_render(*args, **kwargs)
+            finally:
+                add_profile_time(
+                    "response_render_time",
+                    time.perf_counter() - render_started_at,
+                )
+
+        response.render = profiled_render
+        return response
 
 
 class MetricsMiddleware:
@@ -69,7 +68,3 @@ class MetricsMiddleware:
         if request.path != "/api/metrics/":
             record_request(response.status_code)
         return response
-
-
-def _clean_sql(sql):
-    return " ".join(str(sql).split())[:2000]
