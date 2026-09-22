@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth import authenticate
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -16,6 +17,7 @@ from users.roles import (
 User = get_user_model()
 
 
+@extend_schema_field(serializers.ChoiceField(choices=TASKFLOW_ROLES))
 class RoleField(serializers.Field):
     def to_representation(self, obj):
         return get_taskflow_role(obj)
@@ -94,12 +96,15 @@ class UserSerializer(serializers.ModelSerializer):
             "updated_at",
         )
 
+    @extend_schema_field(serializers.CharField())
     def get_username(self, obj):
         return obj.email
 
+    @extend_schema_field(serializers.ChoiceField(choices=TASKFLOW_ROLES))
     def get_role(self, obj):
         return get_taskflow_role(obj)
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_modules(self, obj):
         return get_allowed_modules(obj)
 
@@ -136,9 +141,11 @@ class ManagedUserSerializer(serializers.ModelSerializer):
             "last_name": {"required": True, "allow_blank": False},
         }
 
+    @extend_schema_field(serializers.CharField())
     def get_username(self, obj):
         return obj.email
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_modules(self, obj):
         return get_allowed_modules(obj)
 

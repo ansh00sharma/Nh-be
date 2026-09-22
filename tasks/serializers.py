@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from projects.models import Project
@@ -48,11 +49,13 @@ class TaskSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             self.fields["project"].queryset = get_project_queryset_for_user(request.user)
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_assignee_name(self, obj):
         if not obj.assignee:
             return None
         return f"{obj.assignee.first_name} {obj.assignee.last_name}".strip()
 
+    @extend_schema_field(serializers.CharField())
     def get_assigned_by_name(self, obj):
         owner = obj.project.owner
         return f"{owner.first_name} {owner.last_name}".strip()

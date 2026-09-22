@@ -1,17 +1,19 @@
 from django.core.cache import cache
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
+from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
-from api.responses import success_response
+from api.responses import error_response, success_response
 from tasks.cache import (
     TASK_LIST_CACHE_TTL_SECONDS,
     increment_task_list_cache_versions,
     make_task_list_cache_key,
 )
+from tasks.models import Task
 from tasks.querysets import get_task_queryset_for_user
 from tasks.serializers import TaskSerializer
 from notifications.tasks import (
@@ -104,6 +106,16 @@ class TaskViewSet(ModelViewSet):
         response = super().list(request, *args, **kwargs)
         cache.set(cache_key, response.data, TASK_LIST_CACHE_TTL_SECONDS)
         return response
+
+    @action(detail=True, methods=["get"], url_path="direct")
+    def direct(self, request, pk=None):
+        try:
+            task = self.get_queryset().get(pk=pk)
+        except Task.DoesNotExist:
+            return error_response("This task was deleted", status_code=404)
+
+        serializer = self.get_serializer(task)
+        return success_response("Task fetched successfully", serializer.data)
 
     def perform_create(self, serializer):
         task = serializer.save()

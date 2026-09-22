@@ -231,6 +231,45 @@ class TaskAPITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_direct_task_endpoint_returns_visible_task(self):
+        task = Task.objects.create(
+            project=self.project,
+            title="Direct linked task",
+            assignee=self.agent,
+            status=Task.Status.IN_PROGRESS,
+        )
+        self.authenticate(self.user)
+
+        response = self.client.get(f"/api/tasks/{task.id}/direct/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["status"], "success")
+        self.assertEqual(response.data["data"]["id"], task.id)
+        self.assertEqual(response.data["data"]["title"], "Direct linked task")
+
+    def test_direct_task_endpoint_returns_deleted_message_when_missing(self):
+        self.authenticate(self.user)
+
+        response = self.client.get("/api/tasks/999999/direct/")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["status"], "error")
+        self.assertEqual(response.data["message"], "This task was deleted")
+        self.assertIsNone(response.data["data"])
+
+    def test_direct_task_endpoint_does_not_bypass_visibility(self):
+        task = Task.objects.create(
+            project=self.project,
+            title="Other agent task",
+            assignee=self.other_agent,
+        )
+        self.authenticate(self.agent)
+
+        response = self.client.get(f"/api/tasks/{task.id}/direct/")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["message"], "This task was deleted")
+
     def test_manager_cannot_modify_admin_owned_task(self):
         task = Task.objects.create(project=self.admin_project, title="Admin task")
         self.authenticate(self.user)

@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
+    "drf_spectacular",
     "dashboard",
     "users",
     "api",
@@ -182,9 +183,26 @@ REST_FRAMEWORK = {
     ],
     "EXCEPTION_HANDLER": "api.exceptions.standard_exception_handler",
     "DEFAULT_PAGINATION_CLASS": "api.pagination.StandardPageNumberPagination",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "PAGE_SIZE": 10,
     "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%SZ",
     "DATETIME_INPUT_FORMATS": ["iso-8601"],
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "TaskFlow Backend API",
+    "DESCRIPTION": (
+        "OpenAPI documentation for the TaskFlow backend. "
+        "Use the Authorize button with a JWT access token from /api/auth/login/."
+    ),
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SWAGGER_UI_SETTINGS": {
+        "persistAuthorization": True,
+        "displayRequestDuration": True,
+        "filter": True,
+    },
 }
 
 SIMPLE_JWT = {
