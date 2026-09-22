@@ -45,6 +45,7 @@ def get_cached_project_list_response(request):
         log_label="PROJECT",
         operation=PROJECT_LIST_CACHE_OPERATION,
         version=get_project_cache_version(),
+        ttl_seconds=settings.PROJECT_LIST_CACHE_TTL,
         extra_context=get_project_list_cache_context(request),
     )
 
@@ -54,4 +55,6 @@ def set_cached_project_list_response(cache_key, response):
         cache_key,
         response,
         settings.PROJECT_LIST_CACHE_TTL,
+        log_label="PROJECT",
+        verify=settings.REQUEST_TIMING_ENABLED,
     )

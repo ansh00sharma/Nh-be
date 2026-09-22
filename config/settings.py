@@ -176,7 +176,7 @@ CELERY_BEAT_SCHEDULE = {
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "api.authentication.ProfiledJWTAuthentication",
     ],
     "DEFAULT_RENDERER_CLASSES": [
         "api.renderers.StandardJSONRenderer",
@@ -218,3 +218,25 @@ REQUEST_TIMING_SLOW_SQL_THRESHOLD_SECONDS = float(
     env("REQUEST_TIMING_SLOW_SQL_THRESHOLD_SECONDS", "0.1")
 )
 PROJECT_LIST_CACHE_TTL = int(env("PROJECT_LIST_CACHE_TTL", "300"))
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        "api.response_cache": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "api.profiling": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}
