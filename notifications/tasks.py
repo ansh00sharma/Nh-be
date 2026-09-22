@@ -12,7 +12,7 @@ from tasks.models import Task
 logger = logging.getLogger(__name__)
 User = get_user_model()
 IST_TIME_ZONE = ZoneInfo("Asia/Kolkata")
-TASKFLOW_PRODUCTION_TASKS_URL = "http://13.127.86.130/tasks"
+TASKFLOW_PRODUCTION_TASKS_URL = "http://15.252.221.30/tasks"
 
 
 @shared_task
