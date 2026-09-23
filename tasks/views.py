@@ -1,4 +1,6 @@
+from django.conf import settings
 from django.core.cache import cache
+from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework.decorators import action
@@ -134,7 +136,8 @@ class TaskViewSet(ModelViewSet):
             *get_admin_user_ids(),
         )
         if task.assignee_id:
-            create_task_created_notification.delay(
+            _delay_after_commit(
+                create_task_created_notification,
                 task.id,
                 task.assignee_id,
                 self.request.user.id,
@@ -154,13 +157,15 @@ class TaskViewSet(ModelViewSet):
             *get_admin_user_ids(),
         )
         if task.assignee_id and task.assignee_id != previous_assignee_id:
-            create_task_reassigned_notification.delay(
+            _delay_after_commit(
+                create_task_reassigned_notification,
                 task.id,
                 task.assignee_id,
                 self.request.user.id,
             )
         if task.status != previous_status:
-            create_task_status_changed_notification.delay(
+            _delay_after_commit(
+                create_task_status_changed_notification,
                 task.id,
                 previous_status,
                 task.status,
@@ -197,3 +202,11 @@ def _parse_due_date_filter(value, end_of_day):
     if timezone.is_naive(parsed_value):
         return timezone.make_aware(parsed_value, timezone.get_current_timezone())
     return parsed_value
+
+
+def _delay_after_commit(celery_task, *args):
+    if getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
+        celery_task.delay(*args)
+        return
+
+    transaction.on_commit(lambda: celery_task.delay(*args))

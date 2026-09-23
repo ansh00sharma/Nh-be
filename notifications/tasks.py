@@ -16,7 +16,11 @@ IST_TIME_ZONE = ZoneInfo("Asia/Kolkata")
 TASKFLOW_PRODUCTION_TASKS_URL = "http://15.252.221.30/tasks"
 
 
-@shared_task
+@shared_task(
+    autoretry_for=(Task.DoesNotExist,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3},
+)
 @traced("notification.task.created")
 def create_task_created_notification(task_id, assignee_id, assigned_by_id=None):
     task = Task.objects.select_related("assignee", "project", "project__owner").get(id=task_id)
@@ -40,7 +44,11 @@ def create_task_created_notification(task_id, assignee_id, assigned_by_id=None):
     )
 
 
-@shared_task
+@shared_task(
+    autoretry_for=(Task.DoesNotExist,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3},
+)
 @traced("notification.task.reassigned")
 def create_task_reassigned_notification(task_id, assignee_id, assigned_by_id=None):
     task = Task.objects.select_related("assignee", "project", "project__owner").get(id=task_id)
@@ -64,7 +72,11 @@ def create_task_reassigned_notification(task_id, assignee_id, assigned_by_id=Non
     )
 
 
-@shared_task
+@shared_task(
+    autoretry_for=(Task.DoesNotExist,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3},
+)
 @traced("notification.task.status_changed")
 def create_task_status_changed_notification(task_id, old_status, new_status, changed_by_id=None):
     task = Task.objects.select_related("project", "project__owner", "assignee").get(id=task_id)
@@ -171,14 +183,29 @@ def _create_notification_and_send_email(
     template_name,
     context,
 ):
-    notification = Notification.objects.create(
+    notification = Notification.objects.filter(
         user=user,
         task=task,
         type=notification_type,
         message=message,
-        is_read_by_system=True,
-        is_send=False,
-    )
+    ).first()
+
+    if notification and notification.is_read_by_system and notification.is_send:
+        return True
+
+    if notification:
+        notification.is_read_by_system = True
+        notification.save(update_fields=["is_read_by_system"])
+    else:
+        notification = Notification.objects.create(
+            user=user,
+            task=task,
+            type=notification_type,
+            message=message,
+            is_read_by_system=True,
+            is_send=False,
+        )
+
     return _send_and_mark_notification(
         notification,
         user,
