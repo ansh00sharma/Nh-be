@@ -11,6 +11,12 @@ The backend is designed for a frontend client that consumes JWT-protected APIs a
 - Grafana: http://15.252.221.30:3000/
 - Prometheus: http://15.252.221.30:9090/
 
+## Demo Users
+
+- Admin: `admin@taskflow.in` / `aisufhasiw@eq2weh3as`
+- Manager: `sharma999ansh@gmail.com` / `welcome`
+- Agent: `ansh.sharma.tenant@gmail.com` / `welcome`
+
 ## Core Functionality
 
 - User signup, login, logout, token refresh, and current-user profile APIs.
