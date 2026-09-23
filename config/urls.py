@@ -10,6 +10,7 @@ from api.views import api_root, health, metrics
 
 urlpatterns = [
     path("", api_root, name="root"),
+    path("", include("django_prometheus.urls")),
     path("api/", api_root, name="api-root"),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

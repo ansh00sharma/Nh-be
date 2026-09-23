@@ -15,6 +15,10 @@ class Project(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["owner", "-created_at"], name="projects_owner_created_idx"),
+            models.Index(fields=["-created_at"], name="projects_created_idx"),
+        ]
 
     def __str__(self):
         return self.name

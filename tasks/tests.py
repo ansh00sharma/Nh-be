@@ -3,7 +3,9 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db import connection
 from django.test import override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -80,6 +82,14 @@ class TaskAPITests(APITestCase):
         access_token = RefreshToken.for_user(user).access_token
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
 
+    def task_selects(self, queries):
+        return [
+            query["sql"]
+            for query in queries
+            if "SELECT" in query["sql"].upper()
+            and '"tasks_task"' in query["sql"]
+        ]
+
     def test_user_can_create_task_for_their_own_project(self):
         self.authenticate(self.user)
 
@@ -152,7 +162,8 @@ class TaskAPITests(APITestCase):
         response = self.client.get("/api/tasks/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["count"], 1)
+        self.assertIsNone(response.data["count"])
+        self.assertEqual(len(response.data["results"]), 1)
         self.assertEqual(response.data["results"][0]["id"], own_task.id)
 
     def test_admin_sees_all_tasks(self):
@@ -167,7 +178,7 @@ class TaskAPITests(APITestCase):
         response = self.client.get("/api/tasks/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["count"], 3)
+        self.assertIsNone(response.data["count"])
         self.assertEqual(
             {task["id"] for task in response.data["results"]},
             {manager_task.id, other_manager_task.id, admin_task.id},
@@ -216,7 +227,8 @@ class TaskAPITests(APITestCase):
         response = self.client.get("/api/tasks/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["count"], 1)
+        self.assertIsNone(response.data["count"])
+        self.assertEqual(len(response.data["results"]), 1)
         self.assertEqual(response.data["results"][0]["id"], own_task.id)
 
     def test_agent_cannot_see_another_agents_task(self):
@@ -456,9 +468,11 @@ class TaskAPITests(APITestCase):
         project_response = self.client.get(f"/api/tasks/?project={self.other_project.id}")
 
         self.assertEqual(status_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(status_response.data["count"], 0)
+        self.assertIsNone(status_response.data["count"])
+        self.assertEqual(status_response.data["results"], [])
         self.assertEqual(project_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(project_response.data["count"], 0)
+        self.assertIsNone(project_response.data["count"])
+        self.assertEqual(project_response.data["results"], [])
 
     def test_agent_filters_cannot_bypass_assignment_scope(self):
         Task.objects.create(
@@ -479,9 +493,11 @@ class TaskAPITests(APITestCase):
         status_response = self.client.get(f"/api/tasks/?status={Task.Status.TODO}")
 
         self.assertEqual(assignee_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(assignee_response.data["count"], 0)
+        self.assertIsNone(assignee_response.data["count"])
+        self.assertEqual(assignee_response.data["results"], [])
         self.assertEqual(status_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(status_response.data["count"], 0)
+        self.assertIsNone(status_response.data["count"])
+        self.assertEqual(status_response.data["results"], [])
 
     def test_due_date_filters_return_matching_owned_tasks(self):
         matching_task = Task.objects.create(
@@ -503,7 +519,8 @@ class TaskAPITests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["count"], 1)
+        self.assertIsNone(response.data["count"])
+        self.assertEqual(len(response.data["results"]), 1)
         self.assertEqual(response.data["results"][0]["id"], matching_task.id)
 
     def test_task_list_is_paginated(self):
@@ -515,7 +532,7 @@ class TaskAPITests(APITestCase):
         page_two_response = self.client.get("/api/tasks/?page_size=10&page=2")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["count"], 12)
+        self.assertIsNone(response.data["count"])
         self.assertEqual(len(response.data["results"]), 10)
         self.assertIsNotNone(response.data["next"])
         self.assertEqual(page_two_response.status_code, status.HTTP_200_OK)
@@ -569,9 +586,42 @@ class TaskAPITests(APITestCase):
 
         self.assertEqual(todo_response.status_code, status.HTTP_200_OK)
         self.assertEqual(done_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(todo_response.data["count"], 1)
-        self.assertEqual(done_response.data["count"], 1)
+        self.assertIsNone(todo_response.data["count"])
+        self.assertIsNone(done_response.data["count"])
+        self.assertEqual(len(todo_response.data["results"]), 1)
+        self.assertEqual(len(done_response.data["results"]), 1)
         self.assertEqual(done_response.data["results"][0]["id"], done_task.id)
+
+    def test_task_list_cache_miss_has_no_count_and_single_task_select(self):
+        for index in range(3):
+            Task.objects.create(
+                project=self.project,
+                title=f"Task {index}",
+                assignee=self.agent,
+            )
+        self.authenticate(self.user)
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(
+                f"/api/tasks/?page=1&page_size=10&assignee={self.agent.id}"
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(any("COUNT(" in query["sql"].upper() for query in queries))
+        self.assertLessEqual(len(self.task_selects(queries)), 1)
+
+    def test_task_cache_hit_has_zero_task_selects(self):
+        Task.objects.create(project=self.project, title="Cached task")
+        self.authenticate(self.user)
+
+        first_response = self.client.get("/api/tasks/?page_size=10")
+        with CaptureQueriesContext(connection) as queries:
+            cached_response = self.client.get("/api/tasks/?page_size=10")
+
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(cached_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(first_response.data, cached_response.data)
+        self.assertEqual(len(self.task_selects(queries)), 0)
 
     def test_task_cache_hit_prints_only_on_cache_hit(self):
         Task.objects.create(project=self.project, title="Cached task")
@@ -715,9 +765,11 @@ class TaskAPITests(APITestCase):
         self.authenticate(self.agent)
         fresh_response = self.client.get("/api/tasks/")
 
-        self.assertEqual(first_response.data["count"], 1)
+        self.assertIsNone(first_response.data["count"])
+        self.assertEqual(len(first_response.data["results"]), 1)
         self.assertEqual(update_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(fresh_response.data["count"], 0)
+        self.assertIsNone(fresh_response.data["count"])
+        self.assertEqual(fresh_response.data["results"], [])
 
     def test_reassignment_invalidates_new_assignee_cache(self):
         task = Task.objects.create(
@@ -738,9 +790,11 @@ class TaskAPITests(APITestCase):
         self.authenticate(self.other_agent)
         fresh_response = self.client.get("/api/tasks/")
 
-        self.assertEqual(first_response.data["count"], 0)
+        self.assertIsNone(first_response.data["count"])
+        self.assertEqual(first_response.data["results"], [])
         self.assertEqual(update_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(fresh_response.data["count"], 1)
+        self.assertIsNone(fresh_response.data["count"])
+        self.assertEqual(len(fresh_response.data["results"]), 1)
         self.assertEqual(fresh_response.data["results"][0]["id"], task.id)
 
     def test_admin_sees_fresh_data_after_manager_task_update(self):

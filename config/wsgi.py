@@ -13,4 +13,8 @@ from django.core.wsgi import get_wsgi_application
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 
+from core.observability import initialize_tracing
+
+initialize_tracing()
+
 application = get_wsgi_application()

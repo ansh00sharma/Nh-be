@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from api.responses import success_response
+from core.observability.decorators import traced
 from users.roles import is_admin
 
 
@@ -29,6 +30,7 @@ class DashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(responses=dashboard_response, tags=["Dashboard"])
+    @traced("dashboard.build_response")
     def get(self, request):
         if not is_admin(request.user):
             raise PermissionDenied("Only admins can access the dashboard.")

@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 from django.core.cache import cache
 
 from users.roles import get_taskflow_role
+from core.observability.decorators import traced
 
 
 TASK_LIST_CACHE_TTL_SECONDS = 300
@@ -13,6 +14,7 @@ def task_list_version_key(user_id):
     return f"tasks:list:user:{user_id}:version"
 
 
+@traced("task.cache.get_list_version")
 def get_task_list_cache_version(user_id):
     key = task_list_version_key(user_id)
     version = cache.get(key)
@@ -22,6 +24,7 @@ def get_task_list_cache_version(user_id):
     return version
 
 
+@traced("task.cache.increment_list_version")
 def increment_task_list_cache_version(user_id):
     if not user_id:
         return
@@ -35,11 +38,13 @@ def increment_task_list_cache_version(user_id):
         cache.set(key, 2)
 
 
+@traced("task.cache.increment_list_versions")
 def increment_task_list_cache_versions(*user_ids):
     for user_id in set(user_ids):
         increment_task_list_cache_version(user_id)
 
 
+@traced("task.cache.make_list_key")
 def make_task_list_cache_key(request):
     query_items = []
     for key, values in sorted(request.query_params.lists()):

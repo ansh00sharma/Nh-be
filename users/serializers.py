@@ -5,11 +5,13 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
+from core.observability.decorators import traced
 from users.roles import (
     AGENT,
     TASKFLOW_ROLES,
     assign_taskflow_role,
     get_allowed_modules,
+    get_allowed_modules_for_role,
     get_taskflow_role,
 )
 
@@ -47,6 +49,7 @@ class SignupSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("A user with this email already exists.")
         return email
 
+    @traced("auth.signup.create_user")
     def create(self, validated_data):
         user = User.objects.create_user(**validated_data)
         assign_taskflow_role(user, AGENT)
@@ -54,6 +57,7 @@ class SignupSerializer(serializers.ModelSerializer):
 
 
 class LoginSerializer(TokenObtainPairSerializer):
+    @traced("auth.login.validate_credentials")
     def validate(self, attrs):
         email = (attrs.get(self.username_field) or attrs.get("username") or "").strip().lower()
         password = attrs.get("password")
@@ -106,6 +110,9 @@ class UserSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_modules(self, obj):
+        annotated_role = getattr(obj, "taskflow_role", None)
+        if annotated_role in TASKFLOW_ROLES:
+            return get_allowed_modules_for_role(annotated_role)
         return get_allowed_modules(obj)
 
 
@@ -163,6 +170,7 @@ class ManagedUserSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"password": "Password is required."})
         return attrs
 
+    @traced("user.serializer.create")
     def create(self, validated_data):
         role = validated_data.pop("role")
         password = validated_data.pop("password")
@@ -170,6 +178,7 @@ class ManagedUserSerializer(serializers.ModelSerializer):
         assign_taskflow_role(user, role)
         return user
 
+    @traced("user.serializer.update")
     def update(self, instance, validated_data):
         role = validated_data.pop("role", None)
         password = validated_data.pop("password", None)

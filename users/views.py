@@ -18,12 +18,15 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 
 from api.responses import success_response
+from api.pagination import NoCountPageNumberPagination
+from core.observability.decorators import traced
 from users.serializers import (
     LoginSerializer,
     ManagedUserSerializer,
     SignupSerializer,
     UserSerializer,
 )
+from users.querysets import with_taskflow_role
 from users.roles import is_admin_or_manager
 
 
@@ -50,6 +53,7 @@ class SignupView(APIView):
     permission_classes = [AllowAny]
 
     @extend_schema(request=SignupSerializer, responses={201: UserSerializer}, tags=["Auth"])
+    @traced("auth.signup")
     def post(self, request):
         serializer = SignupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -61,6 +65,7 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
 
     @extend_schema(request=LoginSerializer, responses=LoginSerializer, tags=["Auth"])
+    @traced("auth.login")
     def post(self, request):
         serializer = LoginSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
@@ -71,6 +76,7 @@ class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(request=logout_request, responses=logout_response, tags=["Auth"])
+    @traced("auth.logout")
     def post(self, request):
         refresh_token = request.data.get("refresh")
 
@@ -87,6 +93,7 @@ class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(responses=UserSerializer, tags=["Auth"])
+    @traced("auth.me")
     def get(self, request):
         return Response(UserSerializer(request.user).data)
 
@@ -101,15 +108,18 @@ class ManagedUserViewSet(
 ):
     serializer_class = ManagedUserSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = NoCountPageNumberPagination
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
         if not is_admin_or_manager(request.user):
             raise PermissionDenied("Only admins and managers can access users.")
 
+    @traced("user.repository.list")
     def get_queryset(self):
-        return User.objects.order_by("id")
+        return with_taskflow_role(User.objects.all()).order_by("id")
 
+    @traced("user.destroy")
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         self.perform_destroy(instance)

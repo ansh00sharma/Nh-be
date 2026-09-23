@@ -1,10 +1,17 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.core.cache import cache
+from django.db import connection
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
+from django.test.utils import CaptureQueriesContext
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from projects.models import Project
+from users.querysets import with_taskflow_role
 from users.roles import ADMIN, AGENT, MANAGER, assign_taskflow_role
+from users.serializers import ManagedUserSerializer
 from users.seed import ensure_final_seed_data
 
 
@@ -12,6 +19,14 @@ User = get_user_model()
 
 
 class AuthAPITests(APITestCase):
+    def user_selects(self, queries):
+        return [
+            query["sql"]
+            for query in queries
+            if "SELECT" in query["sql"].upper()
+            and '"users_user"' in query["sql"]
+        ]
+
     def test_successful_signup(self):
         response = self.client.post(
             "/api/auth/signup/",
@@ -168,6 +183,37 @@ class AuthAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
         self.assertEqual(response.data["status"], "error")
 
+    @override_settings(
+        CACHES={
+            "default": {
+                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+                "LOCATION": "auth-cache-tests",
+            }
+        }
+    )
+    def test_same_authenticated_user_hits_auth_cache_on_second_request(self):
+        cache.clear()
+        user = User.objects.create_user(
+            email="cached-auth@example.com",
+            first_name="Cached",
+            last_name="Auth",
+            password="strong-password-123",
+        )
+        assign_taskflow_role(user, ADMIN)
+        access_token = RefreshToken.for_user(user).access_token
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
+
+        with CaptureQueriesContext(connection) as first_queries:
+            first_response = self.client.get("/api/auth/me/")
+        with CaptureQueriesContext(connection) as second_queries:
+            second_response = self.client.get("/api/auth/me/")
+
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(second_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(self.user_selects(first_queries))
+        self.assertEqual(self.user_selects(second_queries), [])
+        self.assertEqual(second_response.data["role"], ADMIN)
+
 
 class SeedDataTests(APITestCase):
     def test_final_seed_data_exists_and_is_idempotent(self):
@@ -217,3 +263,81 @@ class SeedDataTests(APITestCase):
             Project.objects.filter(name="HR management", owner=manager).count(),
             1,
         )
+
+
+class ManagedUserAPITests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            email="admin-list@example.com",
+            first_name="Admin",
+            last_name="List",
+            password="strong-password-123",
+        )
+        assign_taskflow_role(self.admin, ADMIN)
+        self.admin._taskflow_role_cache = ADMIN
+        self.client.force_authenticate(user=self.admin)
+
+    def create_users(self, count):
+        roles = (ADMIN, MANAGER, AGENT)
+        users = []
+        for index in range(count):
+            user = User.objects.create_user(
+                email=f"user-{index}@example.com",
+                first_name=f"User{index}",
+                last_name="Example",
+                password="strong-password-123",
+            )
+            assign_taskflow_role(user, roles[index % len(roles)])
+            users.append(user)
+        return users
+
+    def test_managed_user_list_response_contract(self):
+        self.create_users(1)
+
+        response = self.client.get("/api/users/?page_size=10")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        first_user = response.data["results"][0]
+        self.assertEqual(
+            set(first_user.keys()),
+            {
+                "id",
+                "username",
+                "first_name",
+                "last_name",
+                "email",
+                "role",
+                "modules",
+                "created_at",
+                "updated_at",
+            },
+        )
+        self.assertIn(first_user["role"], (ADMIN, MANAGER, AGENT))
+
+    def test_managed_user_list_queries_do_not_scale_with_returned_users(self):
+        self.create_users(20)
+
+        with CaptureQueriesContext(connection) as ten_user_context:
+            ten_user_response = self.client.get("/api/users/?page_size=10")
+
+        with CaptureQueriesContext(connection) as twenty_user_context:
+            twenty_user_response = self.client.get("/api/users/?page_size=20")
+
+        self.assertEqual(ten_user_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(twenty_user_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(ten_user_response.data["results"]), 10)
+        self.assertEqual(len(twenty_user_response.data["results"]), 20)
+        self.assertLessEqual(
+            len(twenty_user_context),
+            len(ten_user_context) + 1,
+        )
+
+    def test_managed_user_serializer_does_not_query_for_annotated_roles(self):
+        self.create_users(10)
+        users = list(with_taskflow_role(User.objects.order_by("id"))[:10])
+
+        with self.assertNumQueries(0):
+            data = ManagedUserSerializer(users, many=True).data
+
+        self.assertEqual(len(data), 10)
+        self.assertTrue(all(item["role"] in (ADMIN, MANAGER, AGENT) for item in data))

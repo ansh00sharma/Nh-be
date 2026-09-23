@@ -7,7 +7,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
+from api.pagination import NoCountPageNumberPagination
 from api.responses import error_response, success_response
+from core.observability.decorators import traced, traced_span
 from tasks.cache import (
     TASK_LIST_CACHE_TTL_SECONDS,
     increment_task_list_cache_versions,
@@ -27,6 +29,7 @@ from users.roles import get_admin_user_ids, is_admin, is_agent, is_manager
 class TaskViewSet(ModelViewSet):
     serializer_class = TaskSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = NoCountPageNumberPagination
     agent_restricted_update_fields = {
         "assignee",
         "project",
@@ -40,6 +43,7 @@ class TaskViewSet(ModelViewSet):
         if not (is_admin(request.user) or is_manager(request.user) or is_agent(request.user)):
             raise PermissionDenied("An admin, manager, or agent role is required.")
 
+    @traced("task.view.get_queryset")
     def get_queryset(self):
         queryset = get_task_queryset_for_user(self.request.user)
 
@@ -97,17 +101,21 @@ class TaskViewSet(ModelViewSet):
         return super().update(request, *args, **kwargs)
 
     def list(self, request, *args, **kwargs):
-        cache_key = make_task_list_cache_key(request)
-        cached_data = cache.get(cache_key)
+        with traced_span("task.list.cache_lookup"):
+            cache_key = make_task_list_cache_key(request)
+            cached_data = cache.get(cache_key)
         if cached_data is not None:
             print(f"[TASK CACHE HIT] user={request.user.id} key={cache_key}")
             return Response(cached_data)
 
-        response = super().list(request, *args, **kwargs)
-        cache.set(cache_key, response.data, TASK_LIST_CACHE_TTL_SECONDS)
+        with traced_span("task.list.build_response"):
+            response = super().list(request, *args, **kwargs)
+        with traced_span("task.list.cache_store"):
+            cache.set(cache_key, response.data, TASK_LIST_CACHE_TTL_SECONDS)
         return response
 
     @action(detail=True, methods=["get"], url_path="direct")
+    @traced("task.direct")
     def direct(self, request, pk=None):
         try:
             task = self.get_queryset().get(pk=pk)
@@ -117,6 +125,7 @@ class TaskViewSet(ModelViewSet):
         serializer = self.get_serializer(task)
         return success_response("Task fetched successfully", serializer.data)
 
+    @traced("task.create")
     def perform_create(self, serializer):
         task = serializer.save()
         increment_task_list_cache_versions(
@@ -131,6 +140,7 @@ class TaskViewSet(ModelViewSet):
                 self.request.user.id,
             )
 
+    @traced("task.update")
     def perform_update(self, serializer):
         previous_project_owner_id = serializer.instance.project.owner_id
         previous_assignee_id = serializer.instance.assignee_id
@@ -157,6 +167,7 @@ class TaskViewSet(ModelViewSet):
                 self.request.user.id,
             )
 
+    @traced("task.destroy")
     def perform_destroy(self, instance):
         owner_id = instance.project.owner_id
         assignee_id = instance.assignee_id

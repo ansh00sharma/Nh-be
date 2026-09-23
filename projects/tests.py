@@ -62,6 +62,14 @@ class ProjectAPITests(APITestCase):
         self.client.credentials()
         self.client.force_authenticate(user=user)
 
+    def project_selects(self, queries):
+        return [
+            query["sql"]
+            for query in queries
+            if "SELECT" in query["sql"].upper()
+            and '"projects_project"' in query["sql"]
+        ]
+
     def test_authenticated_user_can_create_project(self):
         self.authenticate(self.user)
 
@@ -123,7 +131,7 @@ class ProjectAPITests(APITestCase):
         response = self.client.get("/api/projects/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["count"], 1)
+        self.assertIsNone(response.data["count"])
         self.assertEqual(response.data["results"][0]["id"], own_project.id)
 
     def test_agent_cannot_list_projects(self):
@@ -250,7 +258,7 @@ class ProjectAPITests(APITestCase):
         response = self.client.get("/api/projects/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertGreaterEqual(response.data["count"], 2)
+        self.assertIsNone(response.data["count"])
         self.assertTrue(
             {manager_project.id, admin_project.id}.issubset(
                 {project["id"] for project in response.data["results"]}
@@ -268,7 +276,7 @@ class ProjectAPITests(APITestCase):
         self.assertEqual(first_response.status_code, status.HTTP_200_OK)
         self.assertEqual(cached_response.status_code, status.HTTP_200_OK)
         self.assertEqual(first_response.data, cached_response.data)
-        self.assertEqual(cached_response.data["count"], 1)
+        self.assertIsNone(cached_response.data["count"])
 
         create_response = self.client.post(
             "/api/projects/",
@@ -279,7 +287,8 @@ class ProjectAPITests(APITestCase):
 
         self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(refreshed_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(refreshed_response.data["count"], 3)
+        self.assertIsNone(refreshed_response.data["count"])
+        self.assertEqual(len(refreshed_response.data["results"]), 3)
 
     def test_project_list_cache_miss_then_hit_and_reduces_queries(self):
         for index in range(3):
@@ -296,6 +305,11 @@ class ProjectAPITests(APITestCase):
         self.assertEqual(cached_response.status_code, status.HTTP_200_OK)
         self.assertEqual(first_response.data, cached_response.data)
         self.assertLess(len(warm_queries), len(cold_queries))
+        self.assertEqual(len(self.project_selects(cold_queries)), 1)
+        self.assertEqual(len(self.project_selects(warm_queries)), 0)
+        self.assertFalse(
+            any("COUNT(" in query["sql"].upper() for query in cold_queries),
+        )
         messages = "\n".join(logs.output)
         self.assertIn(f"[PROJECT CACHE MISS] user={self.user.id}", messages)
         self.assertIn(f"[PROJECT CACHE HIT] user={self.user.id}", messages)
@@ -346,7 +360,7 @@ class ProjectAPITests(APITestCase):
         self.assertEqual(first_response.status_code, status.HTTP_200_OK)
         self.assertEqual(cached_response.status_code, status.HTTP_200_OK)
         self.assertEqual(first_response.data, cached_response.data)
-        self.assertEqual(cached_response.data["count"], 1)
+        self.assertIsNone(cached_response.data["count"])
 
     def test_post_is_not_served_from_project_list_cache(self):
         Project.objects.create(name="Cached Project", owner=self.user)
@@ -364,7 +378,8 @@ class ProjectAPITests(APITestCase):
         self.assertEqual(post_response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(post_response.data["name"], "Created By Post")
         self.assertEqual(refreshed_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(refreshed_response.data["count"], 2)
+        self.assertIsNone(refreshed_response.data["count"])
+        self.assertEqual(len(refreshed_response.data["results"]), 2)
 
     def test_project_list_cache_logs_miss_and_hit(self):
         Project.objects.create(name="Cached Project", owner=self.user)
@@ -435,7 +450,26 @@ class ProjectAPITests(APITestCase):
         refreshed_response = self.client.get("/api/projects/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(refreshed_response.data["count"], 0)
+        self.assertIsNone(refreshed_response.data["count"])
+        self.assertEqual(refreshed_response.data["results"], [])
+
+    def test_project_list_no_count_pagination_next_previous(self):
+        for index in range(12):
+            Project.objects.create(name=f"Project {index}", owner=self.user)
+        self.force_authenticate(self.user)
+
+        first_response = self.client.get("/api/projects/?page=1&page_size=10")
+        second_response = self.client.get("/api/projects/?page=2&page_size=10")
+
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(second_response.status_code, status.HTTP_200_OK)
+        self.assertIsNone(first_response.data["count"])
+        self.assertIsNotNone(first_response.data["next"])
+        self.assertIsNone(first_response.data["previous"])
+        self.assertEqual(len(first_response.data["results"]), 10)
+        self.assertIsNone(second_response.data["next"])
+        self.assertIsNotNone(second_response.data["previous"])
+        self.assertEqual(len(second_response.data["results"]), 2)
 
     def test_error_project_list_response_is_not_cached(self):
         Project.objects.create(name="Cached Project", owner=self.user)

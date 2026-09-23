@@ -29,6 +29,11 @@ def get_taskflow_role(user):
     if not user or not user.is_authenticated:
         return None
 
+    annotated_role = getattr(user, "taskflow_role", None)
+    if annotated_role in TASKFLOW_ROLES:
+        user._taskflow_role_cache = annotated_role
+        return annotated_role
+
     if hasattr(user, "_taskflow_role_cache"):
         return user._taskflow_role_cache
 
@@ -59,6 +64,10 @@ def is_admin_or_manager(user):
 
 def get_allowed_modules(user):
     role = get_taskflow_role(user)
+    return get_allowed_modules_for_role(role)
+
+
+def get_allowed_modules_for_role(role):
     if role == ADMIN:
         return list(ADMIN_MODULES)
     if role == MANAGER:

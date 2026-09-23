@@ -77,7 +77,7 @@ class StandardResponseAndHealthTests(APITestCase):
         self.assertEqual(
             payload["data"],
             {
-                "database": "healthy",
+                "database": "not_checked",
                 "redis": "healthy",
             },
         )

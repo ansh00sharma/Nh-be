@@ -6,8 +6,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from api.profiling import get_current_profile, milliseconds, profile_timer
+from api.pagination import NoCountPageNumberPagination
 from api.responses import success_response
 from api.viewsets import ProfiledModelViewSet
+from core.observability.decorators import traced, traced_span
 from projects.cache import (
     get_cached_project_list_response,
     increment_project_list_cache_version,
@@ -25,6 +27,7 @@ logger = logging.getLogger("api.profiling")
 class ProjectViewSet(ProfiledModelViewSet):
     serializer_class = ProjectSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = NoCountPageNumberPagination
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
@@ -41,7 +44,8 @@ class ProjectViewSet(ProfiledModelViewSet):
         request_id = profile.request_id if profile else "-"
         cache_get_before = profile.cache_get_time if profile else 0.0
 
-        cache_key, cached_data = get_cached_project_list_response(request)
+        with traced_span("project.list.cache_lookup"):
+            cache_key, cached_data = get_cached_project_list_response(request)
         profile = get_current_profile()
         cache_get_after = profile.cache_get_time if profile else cache_get_before
         cache_get_ms = milliseconds(cache_get_after - cache_get_before)
@@ -61,19 +65,22 @@ class ProjectViewSet(ProfiledModelViewSet):
             return Response(cached_data)
 
         with profile_timer("service_time"):
-            queryset_started_at = time.perf_counter()
-            queryset = self.filter_queryset(self.get_queryset())
-            queryset_ms = milliseconds(time.perf_counter() - queryset_started_at)
+            with traced_span("project.list.fetch_queryset"):
+                queryset_started_at = time.perf_counter()
+                queryset = self.filter_queryset(self.get_queryset())
+                queryset_ms = milliseconds(time.perf_counter() - queryset_started_at)
 
-            pagination_started_at = time.perf_counter()
-            page = self.paginate_queryset(queryset)
-            pagination_ms = milliseconds(time.perf_counter() - pagination_started_at)
+            with traced_span("project.list.fetch_page"):
+                pagination_started_at = time.perf_counter()
+                page = self.paginate_queryset(queryset)
+                pagination_ms = milliseconds(time.perf_counter() - pagination_started_at)
 
         serialized_items = page if page is not None else queryset
         serializer = self.get_serializer(serialized_items, many=True)
         serialization_started_at = time.perf_counter()
-        with profile_timer("serialization_time"):
-            data = serializer.data
+        with traced_span("project.list.serialize"):
+            with profile_timer("serialization_time"):
+                data = serializer.data
         serialization_ms = milliseconds(time.perf_counter() - serialization_started_at)
 
         if page is not None:
@@ -83,7 +90,8 @@ class ProjectViewSet(ProfiledModelViewSet):
 
         profile = get_current_profile()
         cache_set_before = profile.cache_set_time if profile else 0.0
-        set_cached_project_list_response(cache_key, response)
+        with traced_span("project.list.cache_store"):
+            set_cached_project_list_response(cache_key, response)
         profile = get_current_profile()
         cache_set_after = profile.cache_set_time if profile else cache_set_before
         cache_set_ms = milliseconds(cache_set_after - cache_set_before)
@@ -101,14 +109,17 @@ class ProjectViewSet(ProfiledModelViewSet):
         )
         return response
 
+    @traced("project.create")
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
         increment_project_list_cache_version()
 
+    @traced("project.update")
     def perform_update(self, serializer):
         serializer.save()
         increment_project_list_cache_version()
 
+    @traced("project.destroy")
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         affected_user_ids = [

@@ -1,5 +1,6 @@
 from projects.models import Project
 from users.roles import ADMIN, MANAGER, get_taskflow_role
+from core.observability.decorators import traced
 
 
 PROJECT_SERIALIZED_FIELDS = (
@@ -12,6 +13,7 @@ PROJECT_SERIALIZED_FIELDS = (
 )
 
 
+@traced("project.repository.get_queryset_for_user")
 def get_project_queryset_for_user(user):
     role = get_taskflow_role(user)
     queryset = Project.objects.only(*PROJECT_SERIALIZED_FIELDS)
