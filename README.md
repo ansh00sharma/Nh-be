@@ -4,6 +4,13 @@ TaskFlow Backend is a Django REST Framework API for a role-based task management
 
 The backend is designed for a frontend client that consumes JWT-protected APIs and displays different modules depending on the logged-in user's role.
 
+## Live Links
+
+- Live application: http://15.252.221.30/
+- Swagger API docs: http://15.252.221.30/api/docs/
+- Grafana: http://15.252.221.30:3000/
+- Prometheus: http://15.252.221.30:9090/
+
 ## Core Functionality
 
 - User signup, login, logout, token refresh, and current-user profile APIs.
@@ -263,6 +270,8 @@ Documentation endpoints:
 - `GET /api/schema/`: raw OpenAPI schema.
 - `GET /api/docs/`: Swagger UI for browser-based API testing.
 - `GET /api/redoc/`: ReDoc API reference.
+
+Live Swagger URL: http://15.252.221.30/api/docs/
 
 For protected endpoints, log in through `POST /api/auth/login/`, copy the returned access token, open `/api/docs/`, click `Authorize`, and enter:
 
