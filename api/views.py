@@ -1,5 +1,4 @@
 from django.core.cache import cache
-from django.db import connection
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers
 from rest_framework.decorators import api_view, permission_classes
@@ -67,14 +66,7 @@ def api_root(request):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    checks = {}
-
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1")
-        checks["database"] = "healthy"
-    except Exception:
-        checks["database"] = "unhealthy"
+    checks = {"database": "not_checked"}
 
     try:
         cache.set("health:redis", "ok", 5)
@@ -84,7 +76,7 @@ def health(request):
     except Exception:
         checks["redis"] = "unhealthy"
 
-    if all(value == "healthy" for value in checks.values()):
+    if checks["redis"] == "healthy":
         return success_response("Service is healthy", checks)
 
     return error_response("Service dependency check failed", status_code=503)

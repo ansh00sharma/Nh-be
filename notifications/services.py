@@ -4,10 +4,13 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 
+from core.observability.decorators import traced
+
 
 logger = logging.getLogger(__name__)
 
 
+@traced("notification.email.send")
 def send_notification_email(user, subject, message, template_name=None, context=None):
     if not getattr(user, "email", None):
         return False

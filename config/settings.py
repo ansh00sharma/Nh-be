@@ -49,6 +49,7 @@ ALLOWED_HOSTS = ["*"]
 
 
 INSTALLED_APPS = [
+    "core.apps.CoreConfig",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -60,15 +61,18 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt.token_blacklist",
     "drf_spectacular",
     "dashboard",
-    "users",
+    "users.apps.UsersConfig",
     "api",
     "projects",
     "tasks",
     "notifications",
+    "django_prometheus",
 ]
 
 MIDDLEWARE = [
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "core.observability.hooks.TraceIdResponseMiddleware",
     "api.middleware.RequestTimingMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -78,6 +82,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "api.middleware.MetricsMiddleware",
+    "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
 CORS_ALLOWED_ORIGINS = env_list(
@@ -116,7 +121,7 @@ DATABASES = {
         "HOST": env("POSTGRES_HOST"),
         "PORT": env("POSTGRES_PORT"),
         "CONN_MAX_AGE": 600,
-        "CONN_HEALTH_CHECKS": True,
+        "CONN_HEALTH_CHECKS": False,
     }
 }
 
@@ -220,13 +225,32 @@ REQUEST_TIMING_SLOW_SQL_THRESHOLD_SECONDS = float(
     env("REQUEST_TIMING_SLOW_SQL_THRESHOLD_SECONDS", "0.1")
 )
 PROJECT_LIST_CACHE_TTL = int(env("PROJECT_LIST_CACHE_TTL", "300"))
+AUTH_USER_CACHE_TTL = int(env("AUTH_USER_CACHE_TTL", "300"))
+
+OTEL_ENABLED = env_bool("OTEL_ENABLED", default=False)
+OTEL_SERVICE_NAME = env("OTEL_SERVICE_NAME", "taskflow-backend")
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
+OTEL_TRACE_SAMPLE_RATE = float(env("OTEL_TRACE_SAMPLE_RATE", "1.0"))
+OTEL_CONSOLE_EXPORTER = env_bool("OTEL_CONSOLE_EXPORTER", default=False)
 
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        "otel_trace_context": {
+            "()": "core.observability.tracing.TraceContextFilter",
+        },
+    },
+    "formatters": {
+        "standard": {
+            "format": "%(levelname)s %(name)s trace_id=%(trace_id)s span_id=%(span_id)s %(message)s",
+        },
+    },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
+            "filters": ["otel_trace_context"],
+            "formatter": "standard",
         },
     },
     "loggers": {

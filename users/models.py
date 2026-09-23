@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
+from django.db.models.functions import Lower
 from django.utils import timezone
 
 
@@ -43,6 +44,11 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
+
+    class Meta:
+        indexes = [
+            models.Index(Lower("email"), name="users_email_lower_idx"),
+        ]
 
     def __str__(self):
         return self.email
