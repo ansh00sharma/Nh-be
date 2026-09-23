@@ -1,11 +1,13 @@
 from django.contrib.auth import get_user_model
-from django.contrib.auth import authenticate
+from django.contrib.auth.models import update_last_login
+from django.db.models.functions import Lower
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.settings import api_settings
 
-from core.observability.decorators import traced
+from core.observability.decorators import traced, traced_span
 from users.roles import (
     AGENT,
     TASKFLOW_ROLES,
@@ -62,23 +64,35 @@ class LoginSerializer(TokenObtainPairSerializer):
         email = (attrs.get(self.username_field) or attrs.get("username") or "").strip().lower()
         password = attrs.get("password")
 
-        if email and not User.objects.filter(email__iexact=email).exists():
+        user = (
+            User.objects.alias(email_lower=Lower("email"))
+            .filter(email_lower=email)
+            .first()
+            if email
+            else None
+        )
+        if user is None:
             raise AuthenticationFailed("No account found with this email.")
 
-        if email and password:
-            user = authenticate(
-                request=self.context.get("request"),
-                username=email,
-                password=password,
-            )
+        with traced_span("auth.login.check_password"):
+            password_matches = user.check_password(password)
+        if not password_matches:
+            raise AuthenticationFailed("Incorrect password.")
 
-            if user is None:
-                raise AuthenticationFailed("Incorrect password.")
+        if not user.is_active:
+            raise AuthenticationFailed("This account is inactive.")
 
-            if not user.is_active:
-                raise AuthenticationFailed("This account is inactive.")
+        self.user = user
+        refresh = self.get_token(user)
+        data = {
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+        }
 
-        return super().validate(attrs)
+        if api_settings.UPDATE_LAST_LOGIN:
+            update_last_login(None, user)
+
+        return data
 
 
 class UserSerializer(serializers.ModelSerializer):

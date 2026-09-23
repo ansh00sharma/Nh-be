@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers
 from rest_framework import status
@@ -14,8 +15,14 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import GenericViewSet
+from rest_framework_simplejwt.settings import api_settings
+from rest_framework_simplejwt.token_blacklist.models import (
+    BlacklistedToken,
+    OutstandingToken,
+)
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.utils import datetime_from_epoch
 
 from api.responses import success_response
 from api.pagination import NoCountPageNumberPagination
@@ -31,6 +38,11 @@ from users.roles import is_admin_or_manager
 
 
 User = get_user_model()
+
+
+class LogoutRefreshToken(RefreshToken):
+    def check_blacklist(self):
+        return None
 
 
 logout_request = inline_serializer(
@@ -82,7 +94,7 @@ class LogoutView(APIView):
 
         if refresh_token:
             try:
-                RefreshToken(refresh_token).blacklist()
+                blacklist_refresh_token(refresh_token)
             except TokenError:
                 pass
 
@@ -96,6 +108,39 @@ class MeView(APIView):
     @traced("auth.me")
     def get(self, request):
         return Response(UserSerializer(request.user).data)
+
+
+def blacklist_refresh_token(refresh_token):
+    token = LogoutRefreshToken(refresh_token)
+    jti = token[api_settings.JTI_CLAIM]
+    created_outstanding_token = False
+
+    try:
+        outstanding_token = (
+            OutstandingToken.objects.select_related("blacklistedtoken")
+            .order_by()
+            .get(jti=jti)
+        )
+    except OutstandingToken.DoesNotExist:
+        outstanding_token = OutstandingToken.objects.create(
+            jti=jti,
+            token=str(token),
+            created_at=token.current_time,
+            expires_at=datetime_from_epoch(token["exp"]),
+        )
+        created_outstanding_token = True
+
+    if not created_outstanding_token:
+        try:
+            outstanding_token.blacklistedtoken
+            return
+        except BlacklistedToken.DoesNotExist:
+            pass
+
+    try:
+        BlacklistedToken.objects.create(token=outstanding_token)
+    except IntegrityError:
+        pass
 
 
 class ManagedUserViewSet(
